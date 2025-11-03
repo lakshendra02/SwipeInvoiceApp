@@ -16,6 +16,29 @@ import {
 } from "../features/data/dataService";
 import { useUpdateDataMutation } from "../features/data/firestoreApi";
 
+/**
+ * Utility function to convert a file to a base64 string.
+ * @param {File} file - The file to convert.
+ * @returns {Promise<string>} A promise that resolves with the base64 data.
+ */
+const fileToBase64 = (file) => {
+  return new Promise((resolve, reject) => {
+    // We only process image and PDF files for the Gemini API
+    if (file.type.startsWith("image/") || file.type === "application/pdf") {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result.split(",")[1]); // Get just the base64 part
+      reader.onerror = (error) => reject(error);
+    } else {
+      // Handle Excel or other types
+      // For this project, we'll reject them as we're set up for vision/PDF
+      reject(
+        new Error("Unsupported file format. Please upload an image or PDF.")
+      );
+    }
+  });
+};
+
 const FileUploader = ({ userId, currentData }) => {
   const [file, setFile] = useState(null);
   const dispatch = useDispatch();
@@ -48,18 +71,23 @@ const FileUploader = ({ userId, currentData }) => {
 
     dispatch(setUploadLoading(true));
     try {
-      // 1. Call AI Service to get structured data
-      const extractedData = await extractDataFromFile(file);
+      // 1. Convert file to base64
+      const base64Data = await fileToBase64(file);
+      const fileType = file.type;
 
-      // 2. Process and merge data
-      const newData = processExtractedData(extractedData, currentData);
+      // 2. Call AI Service with fileType and base64 data
+      const extractedData = await extractDataFromFile(fileType, base64Data);
 
-      // 3. Call RTK Mutation to save to Firestore
+      // 3. Process and merge data
+      const newData = processExtractedData(currentData, extractedData);
+
+      // 4. Call RTK Mutation to save to Firestore
       await updateData({ userId, newData }).unwrap(); // unwrap() throws error on failure
 
       dispatch(setUploadSuccess(`Successfully processed ${file.name}.`));
       setFile(null); // Clear file input
-      document.getElementById("file-upload").value = "";
+      const fileInput = document.getElementById("file-upload");
+      if (fileInput) fileInput.value = "";
     } catch (err) {
       console.error("Upload failed:", err);
       dispatch(
@@ -81,7 +109,7 @@ const FileUploader = ({ userId, currentData }) => {
         <input
           id="file-upload"
           type="file"
-          accept=".pdf, .jpg, .jpeg, .png, .xlsx, .xls"
+          accept=".pdf, .jpg, .jpeg, .png" // Updated accept string
           onChange={handleFileChange}
           className="block w-full text-sm text-gray-500
             file:mr-4 file:py-2 file:px-4

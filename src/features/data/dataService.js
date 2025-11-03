@@ -3,245 +3,283 @@
 const API_KEY = ""; // Required for Gemini API calls
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
 
-// --- Utility Functions ------------------------------------------------------
-const fileToBase64 = (file) => {
-  // ... (Same fileToBase64 function as the single-file app)
-  return new Promise((resolve, reject) => {
-    if (file.type.startsWith("image/")) {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result.split(",")[1]);
-      reader.onerror = (error) => reject(error);
-    } else {
-      // Mocking PDF/Excel
-      resolve(`MOCK_BASE64_FOR_${file.type.split("/")[1]}`);
-    }
-  });
-};
+// --- Gemini API Schema & Extraction Logic -------------------------------------
 
-const getOutputSchema = () => {
-  // ... (Same getOutputSchema function as the single-file app)
-  return {
-    type: "OBJECT",
-    properties: {
-      invoiceDate: {
-        type: "STRING",
-        description: "The date of the invoice (YYYY-MM-DD).",
-      },
-      serialNumber: {
-        type: "STRING",
-        description: "The invoice serial or ID number.",
-      },
-      customer: {
+/**
+ * Defines the JSON schema that the Gemini API MUST return.
+ * This is the most important part of the prompt, as it ensures
+ * we get structured, predictable data.
+ */
+const getOutputSchema = () => ({
+  type: "OBJECT",
+  properties: {
+    invoices: {
+      type: "ARRAY",
+      items: {
         type: "OBJECT",
         properties: {
-          name: { type: "STRING", description: "Customer full name." },
-          phone: {
-            type: "STRING",
-            description: "Customer phone number, if available.",
-          },
-        },
-      },
-      items: {
-        type: "ARRAY",
-        description: "List of products/services on the invoice.",
-        items: {
-          type: "OBJECT",
-          properties: {
-            name: {
-              type: "STRING",
-              description: "Product name or description.",
-            },
-            quantity: {
-              type: "NUMBER",
-              description: "Quantity of the product.",
-            },
-            unitPrice: {
-              type: "NUMBER",
-              description: "Unit price before tax/discount.",
-            },
-            taxRate: {
-              type: "NUMBER",
-              description:
-                "Applicable tax rate as a percentage (e.g., 5 for 5%).",
+          serialNumber: { type: "STRING" },
+          invoiceDate: { type: "STRING" },
+          customer_id: { type: "STRING" },
+          lineItems: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                product_id: { type: "STRING" },
+                qty: { type: "NUMBER" },
+              },
+              propertyOrdering: ["product_id", "qty"],
             },
           },
-          required: ["name", "quantity", "unitPrice", "taxRate"],
         },
-      },
-      totalAmount: {
-        type: "NUMBER",
-        description: "Final total amount including tax and discounts.",
+        propertyOrdering: [
+          "serialNumber",
+          "invoiceDate",
+          "customer_id",
+          "lineItems",
+        ],
       },
     },
-    required: [
-      "invoiceDate",
-      "serialNumber",
-      "customer",
-      "items",
-      "totalAmount",
-    ],
-  };
+    products: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          id: { type: "STRING" },
+          name: { type: "STRING" },
+          quantity: { type: "NUMBER" },
+          unitPrice: { type: "NUMBER" },
+          tax: { type: "NUMBER" },
+        },
+        propertyOrdering: ["id", "name", "quantity", "unitPrice", "tax"],
+      },
+    },
+    customers: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          id: { type: "STRING" },
+          name: { type: "STRING" },
+          phone: { type: "STRING" },
+        },
+        propertyOrdering: ["id", "name", "phone"],
+      },
+    },
+  },
+  propertyOrdering: ["invoices", "products", "customers"],
+});
+
+/**
+ * A retry mechanism with exponential backoff for API calls.
+ */
+const fetchWithRetry = async (url, options, retries = 3, backoff = 1000) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok) {
+        return await response.json();
+      }
+      // Don't retry on client errors (4xx), but do on server errors (5xx)
+      if (response.status >= 400 && response.status < 500) {
+        throw new Error(`API returned status ${response.status}`);
+      }
+      // Log retry and wait
+      console.warn(
+        `API call failed with status ${response.status}. Retrying in ${backoff}ms...`
+      );
+    } catch (error) {
+      if (i === retries - 1) throw error; // Re-throw last error
+    }
+    await new Promise((resolve) => setTimeout(resolve, backoff));
+    backoff *= 2; // Exponential backoff
+  }
 };
 
-// --- Main Extraction Service ------------------------------------------------
 /**
- * Processes a file, calls Gemini API, and returns structured data.
- * @param {File} file The file to upload.
- * @returns {Promise<object>} The extracted JSON data.
+ * Calls the Gemini API to extract structured data from a file.
+ * @param {string} fileType - 'image/png', 'application/pdf', etc.
+ * @param {string} data - Base64 encoded string of the file.
+ * @returns {Promise<object>} The structured JSON data.
  */
-export const extractDataFromFile = async (file) => {
-  let parts = [];
-  let mimeType = file.type;
-  let base64Data = null;
-  let prompt = "";
+export const extractDataFromFile = async (fileType, data) => {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
 
-  // 1. Convert file to parts for Gemini API
-  if (mimeType.startsWith("image/") || mimeType === "application/pdf") {
-    base64Data = await fileToBase64(file);
+  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
-    if (base64Data.startsWith("MOCK_BASE64")) {
-      prompt = `Extract all invoice details from this document... (Mock PDF/Excel Text)`;
-      parts.push({ text: prompt });
-    } else {
-      prompt = `Analyze this image of an invoice. Extract... (Image Prompt)`;
-      parts.push({ text: prompt });
-      parts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
-    }
-  } else if (mimeType.includes("spreadsheet") || mimeType.includes("excel")) {
-    prompt = `Analyze the following transaction data from an Excel file... (Excel Prompt)`;
-    parts.push({ text: prompt });
-  } else {
-    throw new Error("Unsupported file format.");
-  }
+  const schema = getOutputSchema();
+  const fileMimeType = fileType.split("/")[0]; // 'image' or 'application'
 
-  // 2. Prepare the API Payload
+  let systemPrompt = `You are an expert data extraction system.
+  Your task is to analyze the provided file and extract all relevant information
+  to populate a billing system.
+  
+  The data is organized into three categories: Invoices, Products, and Customers.
+  - Invoices contain line items.
+  - Products have details and pricing.
+  - Customers have contact info.
+  
+  CRITICAL:
+  - You MUST link entities.
+  - An invoice's "customer_id" MUST match the "id" of a customer in the 'customers' list.
+  - A line item's "product_id" MUST match the "id" of a product in the 'products' list.
+  - If a customer or product is new, create a new entry for it in the 'products' or 'customers' list.
+  - If a customer or product already exists (e.g., in a different invoice), REUSE its "id".
+  - "id" fields should be a unique, descriptive slug (e.g., "customer_john_doe", "product_widget_blue").
+  - Do not extract a "total purchase amount" for customers; the app will calculate this.
+  - Extract tax as a percentage number (e.g., 18 for 18%).
+  
+  You MUST return the data in the specified JSON schema.`;
+
+  // Build the payload
   const payload = {
-    contents: [{ role: "user", parts: parts }],
+    contents: [
+      {
+        parts: [
+          { text: systemPrompt },
+          {
+            inlineData: {
+              mimeType: fileType,
+              data: data,
+            },
+          },
+        ],
+      },
+    ],
     generationConfig: {
       responseMimeType: "application/json",
-      responseSchema: getOutputSchema(),
+      responseSchema: schema,
     },
   };
 
-  // 3. Call the Gemini API (with Exponential Backoff)
-  const maxRetries = 3;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const response = await fetch(GEMINI_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok)
-        throw new Error(`API returned status ${response.status}`);
-
-      const result = await response.json();
-      const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (jsonText) {
-        return JSON.parse(jsonText); // Success
-      } else {
-        throw new Error("API response text was empty or malformed.");
-      }
-    } catch (e) {
-      if (i < maxRetries - 1) {
-        const delay = Math.pow(2, i) * 1000;
-        await new Promise((res) => setTimeout(res, delay));
-      } else {
-        throw e; // Final error
-      }
-    }
+  // Handle text-based files (e.g., Excel/CSV text)
+  // We'd add logic here to convert CSV to text and send a different prompt
+  if (fileMimeType === "application" && fileType !== "application/pdf") {
+    // This is a placeholder. For a real app, we'd parse the text/CSV
+    // and send it as a text-only prompt.
+    console.warn("Text file upload not fully implemented in demo.");
+    // For now, we'll just throw an error
+    throw new Error("Excel/CSV file processing is not set up in this demo.");
   }
-  throw new Error("Failed to get a structured response after retries.");
+
+  console.log("Sending payload to Gemini API...", payload);
+
+  // Make the API call with retry logic
+  try {
+    const result = await fetchWithRetry(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    console.log("API Response:", result);
+
+    if (result.candidates && result.candidates[0].content?.parts?.[0]?.text) {
+      const jsonText = result.candidates[0].content.parts[0].text;
+      return JSON.parse(jsonText);
+    } else {
+      throw new Error("Invalid response structure from API.");
+    }
+  } catch (error) {
+    console.error("Error calling Gemini API:", error);
+    throw error; // Re-throw to be caught by the component
+  }
 };
 
-// --- Data Processing Logic ------------------------------------------------
 /**
- * Merges new extracted data with the existing data state.
- * @param {object} extractedData The new data from Gemini.
- * @param {object} currentData The current data state from Firestore.
- * @returns {object} The new, merged data state.
+ * Merges the extracted AI data with the existing data in the app state.
+ * @param {object} existingData - The current state (data_summary doc).
+ * @param {object} extractedData - The new data from the Gemini API.
+ * @returns {object} The new, merged data_summary object.
  */
-export const processExtractedData = (extractedData, currentData) => {
-  let newInvoices = [...currentData.invoices];
-  let newProducts = { ...currentData.products };
-  let newCustomers = { ...currentData.customers };
+export const processExtractedData = (existingData, extractedData) => {
+  // Create a deep copy to avoid mutating state
+  let newData = JSON.parse(JSON.stringify(existingData));
 
-  const data = extractedData; // Data is already parsed JSON
-
-  const customerId = data.serialNumber + (data.customer.phone || "no-phone");
-  const invoiceId = data.serialNumber + "-" + Date.now();
-
-  // 1. Process Customer
-  if (!newCustomers[customerId]) {
-    newCustomers[customerId] = {
-      id: customerId,
-      name: data.customer.name,
-      phone: data.customer.phone || "N/A",
-      totalPurchaseAmount: 0,
-      _missing: !data.customer.name || !data.customer.phone,
-    };
-  }
-
-  // 2. Process Products and Invoice Line Items
-  let invoiceTotal = 0;
-  const lineItems = data.items.map((item) => {
-    const productId =
-      item.name.toLowerCase().replace(/\s/g, "_") + "-" + item.unitPrice;
-    const unitPrice = item.unitPrice || 0;
-    const quantity = item.quantity || 0;
-    const taxRate = item.taxRate / 100 || 0;
-    const priceBeforeTax = unitPrice * quantity;
-    const taxAmount = priceBeforeTax * taxRate;
-    const priceWithTax = priceBeforeTax + taxAmount;
-
-    if (!newProducts[productId]) {
-      newProducts[productId] = {
-        id: productId,
-        name: item.name,
-        quantity: quantity,
-        unitPrice: unitPrice,
-        tax: taxRate * 100,
-        _missing: !item.name || !item.unitPrice || !item.quantity,
+  // 1. Merge Customers
+  extractedData.customers.forEach((cust) => {
+    if (!newData.customers[cust.id]) {
+      newData.customers[cust.id] = {
+        ...cust,
+        totalPurchaseAmount: 0, // Will be calculated later
+        _missing: !cust.name || !cust.phone,
       };
-    } else {
-      newProducts[productId].quantity += quantity;
     }
-    invoiceTotal += priceWithTax;
-
-    return {
-      id: crypto.randomUUID(),
-      product_id: productId,
-      productName: item.name,
-      qty: quantity,
-      tax: taxRate * 100,
-      totalAmount: priceWithTax,
-      unitPrice: unitPrice,
-      _missing: newProducts[productId]._missing,
-    };
   });
 
-  // 3. Create Invoice Record
-  const newInvoiceRecord = {
-    id: invoiceId,
-    serialNumber: data.serialNumber,
-    customer_id: customerId,
-    customerName: data.customer.name,
-    totalAmount: data.totalAmount || invoiceTotal,
-    date: data.invoiceDate,
-    lineItems: lineItems,
-    _missing: !data.serialNumber || !data.invoiceDate || !data.totalAmount,
-  };
-  newInvoices.push(newInvoiceRecord);
+  // 2. Merge Products
+  extractedData.products.forEach((prod) => {
+    if (!newData.products[prod.id]) {
+      newData.products[prod.id] = {
+        ...prod,
+        _missing: !prod.name || prod.unitPrice == null || prod.quantity == null,
+      };
+    } else {
+      // If product exists, just add to its quantity
+      newData.products[prod.id].quantity += prod.quantity;
+    }
+  });
 
-  // 4. Update Customer Total
-  newCustomers[customerId].totalPurchaseAmount += newInvoiceRecord.totalAmount;
+  // 3. Merge Invoices (and calculate totals)
+  extractedData.invoices.forEach((inv) => {
+    // Check if this invoice serialNumber already exists
+    if (newData.invoices.some((i) => i.serialNumber === inv.serialNumber)) {
+      console.warn(`Invoice ${inv.serialNumber} already exists. Skipping.`);
+      return;
+    }
 
-  // 5. Return the new complete state
-  return {
-    invoices: newInvoices,
-    products: newProducts,
-    customers: newCustomers,
-  };
+    let invoiceTotal = 0;
+    let customerName = "N/A";
+    const processedLineItems = [];
+
+    // Find the customer for this invoice
+    if (newData.customers[inv.customer_id]) {
+      customerName = newData.customers[inv.customer_id].name;
+    }
+
+    inv.lineItems.forEach((item) => {
+      const product = newData.products[item.product_id];
+      if (!product) {
+        console.warn(
+          `Product ${item.product_id} not found for invoice ${inv.serialNumber}.`
+        );
+        return;
+      }
+
+      // Calculate totals for this line item
+      const taxRate = (product.tax || 0) / 100;
+      const priceBeforeTax = product.unitPrice * item.qty;
+      const taxAmount = priceBeforeTax * taxRate;
+      const lineTotal = priceBeforeTax + taxAmount;
+
+      invoiceTotal += lineTotal;
+
+      processedLineItems.push({
+        ...item, // product_id, qty
+        productName: product.name,
+        unitPrice: product.unitPrice,
+        tax: product.tax || 0,
+        totalAmount: lineTotal,
+        _missing: product._missing,
+      });
+    });
+
+    // Update customer's total purchase amount
+    if (newData.customers[inv.customer_id]) {
+      newData.customers[inv.customer_id].totalPurchaseAmount += invoiceTotal;
+    }
+
+    // Add the fully processed invoice
+    newData.invoices.push({
+      ...inv, // serialNumber, invoiceDate, customer_id
+      customerName: customerName,
+      lineItems: processedLineItems,
+      totalAmount: invoiceTotal,
+      _missing: !inv.serialNumber || !inv.invoiceDate || !customerName,
+    });
+  });
+
+  console.log("Merged data:", newData);
+  return newData;
 };

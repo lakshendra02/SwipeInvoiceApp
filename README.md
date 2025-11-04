@@ -80,7 +80,7 @@ root/
 
 ### 1️. Clone the Repository
 ```sh
-git clone https://github.com/YourUsername/swipe-invoice-app.git
+git clone https://github.com/lakshendra02/SwipeInvoiceApp.git
 cd swipe-invoice-app
 ```
 ### 2️. Install Dependencies

@@ -1,131 +1,182 @@
-import React from "react";
+import React, { useMemo } from "react";
+import { useDispatch } from "react-redux";
 import { useUpdateDataMutation } from "../data/firestoreApi";
+import updateEntity from "../data/dataSlice";
+import { useSortableData } from "../../hooks/useSortableData";
 import EditableCell from "../../components/EditableCell";
-import { AlertTriangle } from "lucide-react";
+import { ArrowUp, ArrowDown } from "lucide-react";
 
-// Marker for required fields in the header
-const RequiredMarker = () => (
-  <span className="text-red-500 font-bold ml-1">*</span>
-);
+// REMOVED the broken import:
+// import {
+//   SortableHeader,
+//   getSortIndicator,
+// } from "../../components/SortableHeader";
 
 const CustomersTab = ({ data, userId }) => {
-  const { invoices, products, customers } = data;
-  const [updateData] = useUpdateDataMutation();
+  const dispatch = useDispatch();
+  const [updateData, { isLoading: isUpdating }] = useUpdateDataMutation();
 
-  // Convert customers object to an array for mapping
-  const customerList = Object.values(customers);
+  // Convert customers object to an array for sorting
+  const customersArray = useMemo(
+    () => Object.values(data.customers),
+    [data.customers]
+  );
 
-  // This function creates the *entire new state* and sends it to Firestore
-  const handleUpdate = (customerId, field, newValue) => {
-    // Create a deep copy to avoid mutating the original state
+  const {
+    items: sortedCustomers,
+    requestSort,
+    sortConfig,
+  } = useSortableData(customersArray, { key: "name", direction: "ascending" });
+
+  const handleUpdate = async (customerId, field, value) => {
+    // Create a deep copy of the data
     let newData = JSON.parse(JSON.stringify(data));
-    let customerUpdated = false;
 
-    if (newData.customers[customerId]) {
-      newData.customers[customerId][field] = newValue;
+    // Find and update the customer
+    const customer = newData.customers[customerId];
+    if (customer) {
+      customer[field] = value;
+    } else {
+      console.error("Customer not found for update:", customerId);
+      return;
+    }
 
-      // Check if a required field is now filled
-      const cust = newData.customers[customerId];
-      cust._missing = !cust.name || !cust.phone;
-
-      customerUpdated = true;
-
-      // SYNC: Update all invoices for this customer
+    // When a customer's name or company changes, update all their invoices
+    if (field === "name" || field === "companyName") {
       newData.invoices.forEach((invoice) => {
         if (invoice.customer_id === customerId) {
           if (field === "name") {
-            invoice.customerName = newValue;
-            // Check if this invoice is missing data
-            invoice._missing =
-              !invoice.serialNumber ||
-              !invoice.invoiceDate ||
-              !invoice.totalAmount;
+            invoice.customerName = value;
+          } else if (field === "companyName") {
+            invoice.companyName = value;
           }
         }
       });
     }
 
-    if (customerUpdated) {
-      updateData({ userId, newData });
+    try {
+      // Save the entire data object to Firestore
+      await updateData({ userId, newData }).unwrap();
+      // Dispatch local Redux action to sync other tabs
+      dispatch(
+        updateEntity({
+          id: customerId,
+          field: field,
+          value: value,
+          entityType: "customers",
+        })
+      );
+    } catch (error) {
+      console.error("Failed to update customer:", error);
     }
   };
 
   return (
-    <div className="p-4 bg-white rounded-b-lg shadow-xl">
-      <h2 className="text-xl font-semibold mb-4 text-gray-700">
-        Customers ({customerList.length})
-      </h2>
-
-      <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-lg">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">
-                Customer Name
-                <RequiredMarker />
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">
-                Phone Number
-                <RequiredMarker />
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">
-                Total Purchase Amount
-                <RequiredMarker />
-              </th>
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <SortableHeader
+              label="Customer Name"
+              sortKey="name"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+            />
+            <SortableHeader
+              label="Company Name"
+              sortKey="companyName"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+            />
+            <SortableHeader
+              label="Phone Number"
+              sortKey="phone"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+            />
+            <SortableHeader
+              label="Total Purchase Amt"
+              sortKey="totalPurchaseAmount"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+              className="text-right"
+            />
+          </tr>
+        </thead>
+        <tbody className="bg-white divide-y divide-gray-200">
+          {sortedCustomers.map((customer) => (
+            <tr key={customer.id} className="hover:bg-gray-50">
+              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                <EditableCell
+                  value={customer.name}
+                  onSave={(value) => handleUpdate(customer.id, "name", value)}
+                  isMissing={customer._missing && !customer.name}
+                />
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                <EditableCell
+                  value={customer.companyName}
+                  onSave={(value) =>
+                    handleUpdate(customer.id, "companyName", value)
+                  }
+                  isMissing={customer._missing && !customer.companyName}
+                />
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                <EditableCell
+                  value={customer.phone}
+                  onSave={(value) => handleUpdate(customer.id, "phone", value)}
+                  isMissing={customer._missing && !customer.phone}
+                />
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                {customer.totalPurchaseAmount != null
+                  ? `$${customer.totalPurchaseAmount.toFixed(2)}`
+                  : "$0.00"}
+              </td>
             </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-100">
-            {customerList.length === 0 ? (
-              <tr>
-                <td colSpan="3" className="p-4 text-center text-gray-500">
-                  No customer data yet.
-                </td>
-              </tr>
-            ) : (
-              customerList.map((customer) => {
-                const isMissing =
-                  customer._missing || !customer.name || !customer.phone;
-
-                return (
-                  <tr
-                    key={customer.id}
-                    className={`${
-                      isMissing ? "bg-yellow-50" : "hover:bg-indigo-50"
-                    } transition-colors`}
-                  >
-                    {/* Editable Name */}
-                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-800">
-                      <EditableCell
-                        value={customer.name}
-                        onSave={(v) => handleUpdate(customer.id, "name", v)}
-                        label="Customer Name"
-                        isMissing={!customer.name}
-                      />
-                    </td>
-
-                    {/* Editable Phone */}
-                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-800">
-                      <EditableCell
-                        value={customer.phone}
-                        onSave={(v) => handleUpdate(customer.id, "phone", v)}
-                        label="Phone Number"
-                        isMissing={!customer.phone}
-                      />
-                    </td>
-
-                    {/* Non-Editable Computed Column */}
-                    <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-gray-900">
-                      ${(customer.totalPurchaseAmount || 0).toFixed(2)}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 };
+
+// --- ADDED HELPER COMPONENTS ---
+
+/**
+ * Renders the sort direction arrow.
+ */
+export const getSortIndicator = (sortConfig, sortKey) => {
+  if (sortConfig.key === sortKey) {
+    if (sortConfig.direction === "ascending") {
+      return <ArrowUp size={14} className="ml-1" />;
+    }
+    return <ArrowDown size={14} className="ml-1" />;
+  }
+  return null;
+};
+
+/**
+ * A reusable table header component that handles sorting.
+ */
+export const SortableHeader = ({
+  label,
+  sortKey,
+  requestSort,
+  sortConfig,
+  className = "",
+}) => (
+  <th
+    scope="col"
+    className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 ${className}`}
+    onClick={() => requestSort(sortKey)}
+  >
+    <div className="flex items-center">
+      {label}
+      {getSortIndicator(sortConfig, sortKey)}
+    </div>
+  </th>
+);
 
 export default CustomersTab;

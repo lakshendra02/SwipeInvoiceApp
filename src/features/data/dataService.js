@@ -4,7 +4,6 @@ const API_KEY = ""; // Required for Gemini API calls
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
 
 // --- Gemini API Schema & Extraction Logic -------------------------------------
-// --- Gemini API Schema & Extraction Logic -------------------------------------
 
 /**
  * Defines the JSON schema that the Gemini API MUST return.
@@ -20,6 +19,14 @@ const getOutputSchema = () => ({
           serialNumber: { type: "STRING" },
           invoiceDate: { type: "STRING" },
           customer_id: { type: "STRING" },
+          status: {
+            type: "STRING",
+            description: "e.g., 'Paid', 'Pending', 'Overdue'",
+          },
+          amountPending: {
+            type: "NUMBER",
+            description: "The amount left to be paid.",
+          },
           lineItems: {
             type: "ARRAY",
             items: {
@@ -36,6 +43,8 @@ const getOutputSchema = () => ({
           "serialNumber",
           "invoiceDate",
           "customer_id",
+          "status",
+          "amountPending",
           "lineItems",
         ],
       },
@@ -47,11 +56,24 @@ const getOutputSchema = () => ({
         properties: {
           id: { type: "STRING" },
           name: { type: "STRING" },
+          // --- NEW FIELD ADDED ---
+          brand: {
+            type: "STRING",
+            description: "The brand or manufacturer (e.g., Apple, Sony)",
+          },
+          // --- END NEW FIELD ---
           quantity: { type: "NUMBER" },
           unitPrice: { type: "NUMBER" },
           tax: { type: "NUMBER" },
         },
-        propertyOrdering: ["id", "name", "quantity", "unitPrice", "tax"],
+        propertyOrdering: [
+          "id",
+          "name",
+          "brand", // Added here
+          "quantity",
+          "unitPrice",
+          "tax",
+        ],
       },
     },
     customers: {
@@ -62,8 +84,9 @@ const getOutputSchema = () => ({
           id: { type: "STRING" },
           name: { type: "STRING" },
           phone: { type: "STRING" },
+          companyName: { type: "STRING" },
         },
-        propertyOrdering: ["id", "name", "phone"],
+        propertyOrdering: ["id", "name", "phone", "companyName"],
       },
     },
   },
@@ -110,26 +133,25 @@ export const extractDataFromFile = async (fileType, data) => {
   to populate a billing system.
   
   The data is organized into three categories: Invoices, Products, and Customers.
-  - Invoices contain line items.
-  - Products have details and pricing.
-  - Customers have contact info.
   
   CRITICAL:
   - You MUST link entities.
   - An invoice's "customer_id" MUST match the "id" of a customer in the 'customers' list.
   - A line item's "product_id" MUST match the "id" of a product in the 'products' list.
   - If a customer or product is new, create a new entry for it in the 'products' or 'customers' list.
-  - If a customer or product already exists (e.g., in a different invoice), REUSE its "id".
-  - "id" fields should be a unique, descriptive slug (e.g., "customer_john_doe", "product_widget_blue").
+  - If a customer or product already exists, REUSE its "id".
+  - "id" fields should be a unique, descriptive slug (e.g., "customer_shounak_nextspeed", "product_iphone_16").
   - Do not extract a "total purchase amount" for customers; the app will calculate this.
   - Extract tax as a percentage number (e.g., 18 for 18%).
+  - Extract 'companyName' for customers.
+  - Extract 'brand' (manufacturer) for products.
+  - Extract 'status' and 'amountPending' for invoices if available.
   
   If you receive text data from an Excel/CSV, it will be in CSV format. 
   Each row is a transaction. Use this text data to populate the JSON structure.
   
   You MUST return the data in the specified JSON schema.`;
 
-  // Build the payload
   const payload = {
     contents: [{ parts: [] }],
     generationConfig: {
@@ -138,15 +160,13 @@ export const extractDataFromFile = async (fileType, data) => {
     },
   };
 
-  // --- THIS IS THE UPDATED LOGIC ---
   payload.contents[0].parts.push({ text: systemPrompt });
 
   if (fileType.startsWith("image/") || fileType === "application/pdf") {
-    // It's a vision/PDF file, send inlineData
     payload.contents[0].parts.push({
       inlineData: {
         mimeType: fileType,
-        data: data, // data is base64
+        data: data,
       },
     });
   } else if (
@@ -154,18 +174,15 @@ export const extractDataFromFile = async (fileType, data) => {
     fileType.includes("spreadsheetml") ||
     fileType.includes("csv")
   ) {
-    // It's an Excel/CSV file, send text
     payload.contents[0].parts.push({
-      text: "\n--- Excel/CSV Data ---\n" + data, // data is text
+      text: "\n--- Excel/CSV Data ---\n" + data,
     });
   } else {
     throw new Error("Unsupported file type in extractDataFromFile.");
   }
-  // --- END UPDATED LOGIC ---
 
   console.log("Sending payload to Gemini API...", payload);
 
-  // Make the API call with retry logic
   try {
     const result = await fetchWithRetry(apiUrl, {
       method: "POST",
@@ -189,12 +206,8 @@ export const extractDataFromFile = async (fileType, data) => {
 
 /**
  * Merges the extracted AI data with the existing data in the app state.
- * @param {object} existingData - The current state (data_summary doc).
- * @param {object} extractedData - The new data from the Gemini API.
- * @returns {object} The new, merged data_summary object.
  */
 export const processExtractedData = (existingData, extractedData) => {
-  // Create a deep copy to avoid mutating state
   let newData = JSON.parse(JSON.stringify(existingData));
 
   // 1. Merge Customers
@@ -202,8 +215,9 @@ export const processExtractedData = (existingData, extractedData) => {
     if (!newData.customers[cust.id]) {
       newData.customers[cust.id] = {
         ...cust,
-        totalPurchaseAmount: 0, // Will be calculated later
-        _missing: !cust.name || !cust.phone,
+        companyName: cust.companyName || "N/A",
+        totalPurchaseAmount: 0,
+        _missing: !cust.name || !cust.phone || !cust.companyName,
       };
     }
   });
@@ -213,17 +227,29 @@ export const processExtractedData = (existingData, extractedData) => {
     if (!newData.products[prod.id]) {
       newData.products[prod.id] = {
         ...prod,
-        _missing: !prod.name || prod.unitPrice == null || prod.quantity == null,
+        // --- NEW FIELD ADDED ---
+        brand: prod.brand || "N/A",
+        _missing:
+          !prod.name ||
+          prod.unitPrice == null ||
+          prod.quantity == null ||
+          !prod.brand, // Added check here
+        // --- END NEW FIELD ---
       };
     } else {
-      // If product exists, just add to its quantity
       newData.products[prod.id].quantity += prod.quantity;
+      // If new data has a brand and old one didn't, update it
+      if (
+        (prod.brand && !newData.products[prod.id].brand) ||
+        newData.products[prod.id].brand === "N/A"
+      ) {
+        newData.products[prod.id].brand = prod.brand;
+      }
     }
   });
 
   // 3. Merge Invoices (and calculate totals)
   extractedData.invoices.forEach((inv) => {
-    // Check if this invoice serialNumber already exists
     if (newData.invoices.some((i) => i.serialNumber === inv.serialNumber)) {
       console.warn(`Invoice ${inv.serialNumber} already exists. Skipping.`);
       return;
@@ -231,11 +257,12 @@ export const processExtractedData = (existingData, extractedData) => {
 
     let invoiceTotal = 0;
     let customerName = "N/A";
+    let companyName = "N/A";
     const processedLineItems = [];
 
-    // Find the customer for this invoice
     if (newData.customers[inv.customer_id]) {
       customerName = newData.customers[inv.customer_id].name;
+      companyName = newData.customers[inv.customer_id].companyName;
     }
 
     inv.lineItems.forEach((item) => {
@@ -247,7 +274,6 @@ export const processExtractedData = (existingData, extractedData) => {
         return;
       }
 
-      // Calculate totals for this line item
       const taxRate = (product.tax || 0) / 100;
       const priceBeforeTax = product.unitPrice * item.qty;
       const taxAmount = priceBeforeTax * taxRate;
@@ -256,7 +282,9 @@ export const processExtractedData = (existingData, extractedData) => {
       invoiceTotal += lineTotal;
 
       processedLineItems.push({
-        ...item, // product_id, qty
+        id: crypto.randomUUID(), // Unique ID for each line item
+        product_id: item.product_id,
+        qty: item.qty,
         productName: product.name,
         unitPrice: product.unitPrice,
         tax: product.tax || 0,
@@ -265,18 +293,31 @@ export const processExtractedData = (existingData, extractedData) => {
       });
     });
 
-    // Update customer's total purchase amount
+    // --- Status Logic ---
+    let finalStatus = "Paid"; // Default
+    if (inv.status) {
+      finalStatus = inv.status;
+    } else if (inv.amountPending > 0) {
+      finalStatus = "Pending";
+    }
+    // --- End Status Logic ---
+
     if (newData.customers[inv.customer_id]) {
       newData.customers[inv.customer_id].totalPurchaseAmount += invoiceTotal;
     }
 
-    // Add the fully processed invoice
     newData.invoices.push({
-      ...inv, // serialNumber, invoiceDate, customer_id
+      id: crypto.randomUUID(), // Unique ID for the invoice
+      serialNumber: inv.serialNumber,
+      invoiceDate: inv.invoiceDate,
+      customer_id: inv.customer_id,
       customerName: customerName,
+      companyName: companyName,
       lineItems: processedLineItems,
       totalAmount: invoiceTotal,
-      _missing: !inv.serialNumber || !inv.invoiceDate || !customerName,
+      status: finalStatus,
+      _missing:
+        !inv.serialNumber || !inv.invoiceDate || !customerName || !companyName,
     });
   });
 

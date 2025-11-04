@@ -1,187 +1,355 @@
-import React from "react";
+import React, { useMemo, useState } from "react"; // Added useState
+import { useDispatch } from "react-redux";
 import { useUpdateDataMutation } from "../data/firestoreApi";
+import { updateEntity } from "../data/dataSlice";
+import { useSortableData } from "../../hooks/useSortableData";
 import EditableCell from "../../components/EditableCell";
-import { AlertTriangle } from "lucide-react";
+import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react"; // Added icons
 
-// Marker for required fields in the header
-const RequiredMarker = () => (
-  <span className="text-red-500 font-bold ml-1">*</span>
-);
+const ITEMS_PER_PAGE = 25;
 
 const ProductsTab = ({ data, userId }) => {
-  const { invoices, products, customers } = data;
-  const [updateData] = useUpdateDataMutation();
+  const dispatch = useDispatch();
+  const [updateData, { isLoading: isUpdating }] = useUpdateDataMutation();
+  const [currentPage, setCurrentPage] = useState(1); // Page state
 
-  // Convert products object to an array for mapping
-  const productList = Object.values(products);
+  // Convert products object to an array for sorting and processing
+  const productsArray = useMemo(() => {
+    return Object.values(data.products).map((product) => {
+      const taxRate = (product.tax || 0) / 100;
+      const priceWithTax = product.unitPrice * (1 + taxRate);
+      return {
+        ...product,
+        priceWithTax: priceWithTax,
+      };
+    });
+  }, [data.products]);
 
-  // This function creates the *entire new state* and sends it to Firestore
-  // This ensures all data (including synced fields) is saved.
-  const handleUpdate = (productId, field, newValue) => {
-    // Create a deep copy to avoid mutating the original state
+  const {
+    items: sortedProducts,
+    requestSort,
+    sortConfig,
+  } = useSortableData(productsArray, { key: "name", direction: "ascending" });
+
+  // --- PAGINATION LOGIC ---
+  const totalPages = Math.ceil(sortedProducts.length / ITEMS_PER_PAGE);
+
+  const paginatedItems = useMemo(() => {
+    return sortedProducts.slice(
+      (currentPage - 1) * ITEMS_PER_PAGE,
+      currentPage * ITEMS_PER_PAGE
+    );
+  }, [sortedProducts, currentPage]);
+
+  const goToPage = (page) => {
+    setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+  };
+
+  const nextPage = () => {
+    goToPage(currentPage + 1);
+  };
+
+  const prevPage = () => {
+    goToPage(currentPage - 1);
+  };
+  // --- END PAGINATION LOGIC ---
+
+  const handleUpdate = async (productId, field, value) => {
+    // ... existing handleUpdate logic ...
+    // Create a deep copy of the data
     let newData = JSON.parse(JSON.stringify(data));
-    let productUpdated = false;
 
-    // Ensure the new value is a number if the field requires it
-    const isNumericField =
-      field === "quantity" || field === "unitPrice" || field === "tax";
-    const numericValue = parseFloat(newValue);
-    const valueToSave = isNumericField
-      ? isNaN(numericValue)
-        ? 0
-        : numericValue
-      : newValue;
+    // Find and update the product
+    const product = newData.products[productId];
+    if (product) {
+      if (field === "unitPrice" || field === "tax" || field === "quantity") {
+        product[field] = Number(value);
+      } else {
+        product[field] = value;
+      }
+    } else {
+      console.error("Product not found for update:", productId);
+      return;
+    }
 
-    if (newData.products[productId]) {
-      newData.products[productId][field] = valueToSave;
-
-      // Check if a required field is now filled
-      const prod = newData.products[productId];
-      prod._missing =
-        !prod.name || prod.unitPrice == null || prod.quantity == null;
-
-      productUpdated = true;
-
-      // SYNC: Update all invoice line items that use this product
+    // When a product's name changes, update all invoice line items
+    if (field === "name") {
       newData.invoices.forEach((invoice) => {
         invoice.lineItems.forEach((item) => {
           if (item.product_id === productId) {
-            if (field === "name") {
-              item.productName = valueToSave;
-            }
-            if (field === "unitPrice" || field === "tax") {
-              // Re-calculate totals
-              const unitPrice =
-                field === "unitPrice" ? valueToSave : item.unitPrice;
-              const taxRate = (field === "tax" ? valueToSave : item.tax) / 100;
-              const priceBeforeTax = unitPrice * item.qty;
-              const taxAmount = priceBeforeTax * taxRate;
-
-              item.unitPrice = unitPrice;
-              item.tax = taxRate * 100;
-              item.totalAmount = priceBeforeTax + taxAmount;
-            }
-            // Check if this item is missing data
-            item._missing = prod._missing;
+            item.productName = value;
           }
         });
       });
     }
 
-    if (productUpdated) {
-      updateData({ userId, newData });
+    // TODO: Add logic to recalculate Price with Tax if unitPrice or tax changes
+
+    try {
+      // Save the entire data object to Firestore
+      await updateData({ userId, newData }).unwrap();
+      // Dispatch local Redux action to sync other tabs
+      dispatch(
+        updateEntity({
+          id: productId,
+          field: field,
+          value: value,
+          entityType: "products",
+        })
+      );
+    } catch (error) {
+      console.error("Failed to update product:", error);
     }
   };
 
   return (
-    <div className="p-4 bg-white rounded-b-lg shadow-xl">
-      <h2 className="text-xl font-semibold mb-4 text-gray-700">
-        Products ({productList.length})
-      </h2>
-
-      <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-lg">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">
-                Name
-                <RequiredMarker />
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">
-                Quantity
-                <RequiredMarker />
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">
-                Unit Price
-                <RequiredMarker />
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">
-                Tax (%)
-                <RequiredMarker />
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-bold text-gray-600 uppercase">
-                Price with Tax
-                <RequiredMarker />
-              </th>
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <SortableHeader
+              label="Product Name"
+              sortKey="name"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+            />
+            <SortableHeader
+              label="Brand"
+              sortKey="brand"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+            />
+            <SortableHeader
+              label="Quantity (Stock)"
+              sortKey="quantity"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+              className="text-right"
+            />
+            <SortableHeader
+              label="Unit Price"
+              sortKey="unitPrice"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+              className="text-right"
+            />
+            <SortableHeader
+              label="Tax %"
+              sortKey="tax"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+              className="text-right"
+            />
+            <SortableHeader
+              label="Price with Tax"
+              sortKey="priceWithTax"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+              className="text-right"
+            />
+          </tr>
+        </thead>
+        <tbody className="bg-white divide-y divide-gray-200">
+          {/* Use paginatedItems here instead of sortedProducts */}
+          {paginatedItems.map((product) => (
+            <tr key={product.id} className="hover:bg-gray-50">
+              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                <EditableCell
+                  value={product.name}
+                  onSave={(value) => handleUpdate(product.id, "name", value)}
+                  isMissing={product._missing && !product.name}
+                />
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                <EditableCell
+                  value={product.brand}
+                  onSave={(value) => handleUpdate(product.id, "brand", value)}
+                  isMissing={product._missing && !product.brand}
+                />
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
+                <EditableCell
+                  value={product.quantity}
+                  onSave={(value) =>
+                    handleUpdate(product.id, "quantity", value)
+                  }
+                  isMissing={product._missing && product.quantity == null}
+                  type="number"
+                />
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
+                <EditableCell
+                  value={product.unitPrice}
+                  onSave={(value) =>
+                    handleUpdate(product.id, "unitPrice", value)
+                  }
+                  isMissing={product._missing && product.unitPrice == null}
+                  type="number"
+                />
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
+                <EditableCell
+                  value={product.tax}
+                  onSave={(value) => handleUpdate(product.id, "tax", value)}
+                  isMissing={product._missing && product.tax == null}
+                  type="number"
+                />
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
+                {product.priceWithTax != null
+                  ? `$${product.priceWithTax.toFixed(2)}`
+                  : "N/A"}
+              </td>
             </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-100">
-            {productList.length === 0 ? (
-              <tr>
-                <td colSpan="5" className="p-4 text-center text-gray-500">
-                  No product data yet.
-                </td>
-              </tr>
-            ) : (
-              productList.map((product) => {
-                // Calculate derived field: Price with Tax
-                const taxRate = (product.tax || 0) / 100;
-                const priceWithTax = (product.unitPrice || 0) * (1 + taxRate);
-                const isMissing =
-                  product._missing ||
-                  !product.name ||
-                  product.unitPrice == null ||
-                  product.quantity == null;
+          ))}
+        </tbody>
+      </table>
 
-                return (
-                  <tr
-                    key={product.id}
-                    className={`${
-                      isMissing ? "bg-yellow-50" : "hover:bg-indigo-50"
-                    } transition-colors`}
-                  >
-                    {/* Editable Name */}
-                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-800">
-                      <EditableCell
-                        value={product.name}
-                        onSave={(v) => handleUpdate(product.id, "name", v)}
-                        label="Product Name"
-                        isMissing={!product.name}
-                      />
-                    </td>
-
-                    {/* Editable Quantity */}
-                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-800">
-                      <EditableCell
-                        value={product.quantity}
-                        onSave={(v) => handleUpdate(product.id, "quantity", v)}
-                        label="Quantity"
-                        isMissing={product.quantity == null}
-                      />
-                    </td>
-
-                    {/* Editable Unit Price */}
-                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-800">
-                      <EditableCell
-                        value={product.unitPrice}
-                        onSave={(v) => handleUpdate(product.id, "unitPrice", v)}
-                        label="Unit Price"
-                        isMissing={product.unitPrice == null}
-                      />
-                    </td>
-
-                    {/* Editable Tax */}
-                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-800">
-                      <EditableCell
-                        value={product.tax}
-                        onSave={(v) => handleUpdate(product.id, "tax", v)}
-                        label="Tax %"
-                        isMissing={product.tax == null}
-                      />
-                    </td>
-
-                    {/* Computed Column */}
-                    <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-gray-900">
-                      ${priceWithTax.toFixed(2)}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+      {/* --- PAGINATION CONTROLS --- */}
+      {totalPages > 1 && (
+        <PaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          goToPage={goToPage}
+          nextPage={nextPage}
+          prevPage={prevPage}
+        />
+      )}
     </div>
+  );
+};
+
+// --- ADDED HELPER COMPONENTS ---
+
+/**
+ * Renders the sort direction arrow.
+ */
+export const getSortIndicator = (sortConfig, sortKey) => {
+  if (sortConfig.key === sortKey) {
+    if (sortConfig.direction === "ascending") {
+      return <ArrowUp size={14} className="ml-1" />;
+    }
+    return <ArrowDown size={14} className="ml-1" />;
+  }
+  return null;
+};
+
+/**
+ * A reusable table header component that handles sorting.
+ */
+export const SortableHeader = ({
+  label,
+  sortKey,
+  requestSort,
+  sortConfig,
+  className = "",
+}) => (
+  <th
+    scope="col"
+    className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 ${className}`}
+    onClick={() => requestSort(sortKey)}
+  >
+    <div className="flex items-center">
+      {label}
+      {getSortIndicator(sortConfig, sortKey)}
+    </div>
+  </th>
+);
+
+/**
+ * A reusable pagination control component.
+ */
+const PaginationControls = ({
+  currentPage,
+  totalPages,
+  goToPage,
+  nextPage,
+  prevPage,
+}) => {
+  const pageNumbers = [];
+  // Show max 5 page numbers
+  let startPage = Math.max(1, currentPage - 2);
+  let endPage = Math.min(totalPages, currentPage + 2);
+
+  if (currentPage <= 3) {
+    endPage = Math.min(5, totalPages);
+  }
+  if (currentPage > totalPages - 3) {
+    startPage = Math.max(1, totalPages - 4);
+  }
+
+  for (let i = startPage; i <= endPage; i++) {
+    pageNumbers.push(i);
+  }
+
+  return (
+    <nav
+      className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6"
+      aria-label="Pagination"
+    >
+      <div className="flex flex-1 justify-between sm:hidden">
+        <button
+          onClick={prevPage}
+          disabled={currentPage === 1}
+          className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          Previous
+        </button>
+        <button
+          onClick={nextPage}
+          disabled={currentPage === totalPages}
+          className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
+      <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm text-gray-700">
+            Page <span className="font-medium">{currentPage}</span> of{" "}
+            <span className="font-medium">{totalPages}</span>
+          </p>
+        </div>
+        <div>
+          <nav
+            className="isolate inline-flex -space-x-px rounded-md shadow-sm"
+            aria-label="Pagination"
+          >
+            <button
+              onClick={prevPage}
+              disabled={currentPage === 1}
+              className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+            >
+              <span className="sr-only">Previous</span>
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            </button>
+            {/* Current: "z-10 bg-indigo-600 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600", Default: "text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0" */}
+            {pageNumbers.map((page) => (
+              <button
+                key={page}
+                onClick={() => goToPage(page)}
+                aria-current={page === currentPage ? "page" : undefined}
+                className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ${
+                  page === currentPage
+                    ? "z-10 bg-indigo-600 text-white focus:z-20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                    : "text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0"
+                }`}
+              >
+                {page}
+              </button>
+            ))}
+            <button
+              onClick={nextPage}
+              disabled={currentPage === totalPages}
+              className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+            >
+              <span className="sr-only">Next</span>
+              <ChevronRight className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </nav>
+        </div>
+      </div>
+    </nav>
   );
 };
 

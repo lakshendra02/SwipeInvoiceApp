@@ -1,7 +1,6 @@
 import React from "react";
 import { Users, Box, Receipt } from "lucide-react";
 
-// Reusable Tab Button
 const TabButton = ({ isActive, icon, children, onClick }) => (
   <button
     onClick={onClick}

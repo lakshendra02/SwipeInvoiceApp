@@ -5,24 +5,21 @@ import {
   Users,
   AlertTriangle,
   Loader2,
-  DatabaseZap, // Added icon
+  DatabaseZap,
 } from "lucide-react";
 import { useMemo } from "react";
-import { useUpdateDataMutation } from "../features/data/firestoreApi"; // Added mutation hook
+import { useUpdateDataMutation } from "../features/data/firestoreApi";
 
-// --- FIX: Added isLoading and userId props ---
 const Summary = ({ data, isLoading, userId }) => {
   const [isConfirmingReset, setIsConfirmingReset] = useState(false);
   const [updateData, { isLoading: isUpdating }] = useUpdateDataMutation();
 
-  // --- FIX: Use default empty state and optional chaining to prevent crash ---
   const { invoices = [], products = {}, customers = {} } = data || {};
 
   const invoiceCount = invoices.length;
   const productCount = Object.keys(products).length;
   const customerCount = Object.keys(customers).length;
 
-  // Check for any missing data
   const hasMissingData = useMemo(() => {
     if (!data) return false;
     const allEntities = [
@@ -32,7 +29,6 @@ const Summary = ({ data, isLoading, userId }) => {
     return allEntities.some((entity) => entity._missing);
   }, [data, products, customers]);
 
-  // --- NEW: Function to reset the database ---
   const handleConfirmReset = async () => {
     if (!userId) {
       console.error("Cannot reset: User ID is not available.");
@@ -45,13 +41,12 @@ const Summary = ({ data, isLoading, userId }) => {
     };
     try {
       await updateData({ userId, newData: emptyData }).unwrap();
-      setIsConfirmingReset(false); // Hide confirmation buttons
+      setIsConfirmingReset(false);
     } catch (err) {
       console.error("Failed to reset database:", err);
     }
   };
 
-  // --- FIX: Show loading skeletons ---
   if (isLoading) {
     return (
       <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
@@ -102,7 +97,6 @@ const Summary = ({ data, isLoading, userId }) => {
         </div>
       )}
 
-      {/* --- NEW: Reset Database Button & Confirmation --- */}
       <div className="mt-4 pt-4 border-t border-gray-100">
         {!isConfirmingReset ? (
           <button
@@ -141,7 +135,6 @@ const Summary = ({ data, isLoading, userId }) => {
           </div>
         )}
       </div>
-      {/* --- END: Reset Database Button --- */}
     </div>
   );
 };

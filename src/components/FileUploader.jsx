@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { FileUp, Loader2, XCircle, CheckCircle } from "lucide-react";
-import * as XLSX from "xlsx"; // Import the Excel library
+import * as XLSX from "xlsx";
 import {
   setUploadLoading,
   setUploadError,
@@ -17,29 +17,20 @@ import {
 } from "../features/data/dataService";
 import { useUpdateDataMutation } from "../features/data/firestoreApi";
 
-/**
- * Utility function to convert a file to the format needed by the AI.
- * - For images/PDFs, returns base64 string.
- * - For Excel files, returns a CSV text string.
- * @param {File} file - The file to convert.
- * @returns {Promise<string>} A promise that resolves with the data.
- */
 const fileToData = (file) => {
   return new Promise((resolve, reject) => {
     const fileType = file.type;
     const reader = new FileReader();
 
     if (fileType.startsWith("image/") || fileType === "application/pdf") {
-      // --- Image/PDF Path ---
       reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result.split(",")[1]); // Get just the base64 part
+      reader.onload = () => resolve(reader.result.split(",")[1]);
       reader.onerror = (error) => reject(error);
     } else if (
       fileType.includes("excel") ||
       fileType.includes("spreadsheetml") ||
       fileType.includes("csv")
     ) {
-      // --- Excel/CSV Path ---
       reader.readAsArrayBuffer(file);
       reader.onload = (e) => {
         try {
@@ -47,9 +38,9 @@ const fileToData = (file) => {
           const workbook = XLSX.read(data, { type: "array" });
           const sheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[sheetName];
-          // Convert the sheet to a CSV text string
+
           const csvText = XLSX.utils.sheet_to_csv(worksheet);
-          resolve(csvText); // Resolve with the text content
+          resolve(csvText);
         } catch (err) {
           reject(err);
         }
@@ -66,23 +57,17 @@ const fileToData = (file) => {
 };
 
 const FileUploader = ({ userId, currentData }) => {
-  // --- STATE UPDATED ---
-  // Hold an array of files, not just one
   const [files, setFiles] = useState([]);
   const dispatch = useDispatch();
 
-  // Local UI state from Redux
   const isUploading = useSelector(selectIsUploading);
   const uploadError = useSelector(selectUploadError);
   const uploadSuccessMessage = useSelector(selectUploadSuccessMessage);
 
-  // RTK Query mutation hook to update data
   const [updateData, { isLoading: isUpdating }] = useUpdateDataMutation();
 
-  // --- HANDLER UPDATED ---
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      // Convert the FileList object to a standard array
       setFiles(Array.from(e.target.files));
       dispatch(clearUploadMessage());
     } else {
@@ -90,7 +75,6 @@ const FileUploader = ({ userId, currentData }) => {
     }
   };
 
-  // --- HANDLER UPDATED FOR MULTI-FILE ---
   const handleUploadClick = async () => {
     if (files.length === 0) {
       dispatch(setUploadError("Please select one or more files first."));
@@ -104,17 +88,14 @@ const FileUploader = ({ userId, currentData }) => {
     dispatch(setUploadLoading(true));
 
     try {
-      // 1. Create an array of processing promises.
-      // This will convert and extract data from all files in parallel.
       const extractionPromises = files.map(async (file) => {
         try {
           const fileData = await fileToData(file);
           const fileType = file.type;
           return await extractDataFromFile(fileType, fileData);
         } catch (fileError) {
-          // If one file fails, log it and return null
           console.error(`Failed to process ${file.name}:`, fileError);
-          // Return a special marker to indicate failure for this file
+
           return {
             _fileError: true,
             fileName: file.name,
@@ -123,7 +104,6 @@ const FileUploader = ({ userId, currentData }) => {
         }
       });
 
-      // 2. Wait for all files to be processed by the AI.
       const allExtractedData = await Promise.all(extractionPromises);
 
       const successfulExtractions = allExtractedData.filter(
@@ -141,19 +121,14 @@ const FileUploader = ({ userId, currentData }) => {
         );
       }
 
-      // 3. Process and merge all successful results
-      // Start with a deep copy of the current data
       let finalData = JSON.parse(JSON.stringify(currentData));
 
-      // Loop through each successful extraction and merge it
       for (const extractedData of successfulExtractions) {
         finalData = processExtractedData(finalData, extractedData);
       }
 
-      // 4. Call RTK Mutation ONCE to save all merged data
       await updateData({ userId, newData: finalData }).unwrap();
 
-      // 5. Report success/failure
       let successMessage = `Successfully processed ${successfulExtractions.length} file(s).`;
       if (failedFiles.length > 0) {
         dispatch(
@@ -163,13 +138,12 @@ const FileUploader = ({ userId, currentData }) => {
               .join(", ")}.`
           )
         );
-        // We set success AFTER error so the error message shows
         dispatch(setUploadSuccess(successMessage));
       } else {
         dispatch(setUploadSuccess(successMessage));
       }
 
-      setFiles([]); // Clear file input
+      setFiles([]);
       const fileInput = document.getElementById("file-upload");
       if (fileInput) fileInput.value = "";
     } catch (err) {
@@ -189,13 +163,12 @@ const FileUploader = ({ userId, currentData }) => {
         AI-Powered Data Extraction
       </h3>
       <div className="flex flex-col space-y-4">
-        {/* File Input --- UPDATED WITH 'multiple' --- */}
         <input
           id="file-upload"
           type="file"
           accept=".pdf, .jpg, .jpeg, .png, .xls, .xlsx, .csv"
           onChange={handleFileChange}
-          multiple // <-- THIS IS THE KEY CHANGE
+          multiple
           className="block w-full text-sm text-gray-500
             file:mr-4 file:py-2 file:px-4
             file:rounded-full file:border-0
@@ -204,7 +177,6 @@ const FileUploader = ({ userId, currentData }) => {
             hover:file:bg-indigo-100 cursor-pointer"
         />
 
-        {/* Upload Button --- UPDATED --- */}
         <button
           onClick={handleUploadClick}
           disabled={files.length === 0 || isLoading}
@@ -230,7 +202,6 @@ const FileUploader = ({ userId, currentData }) => {
         </button>
       </div>
 
-      {/* Messages */}
       {uploadError && (
         <div className="mt-4 p-3 rounded-lg flex items-start text-sm bg-red-100 text-red-800">
           <XCircle size={16} className="mt-0.5 mr-2 flex-shrink-0" />

@@ -2,7 +2,6 @@
     @tailwind components;
     @tailwind utilities;
     
-    /* Optional: A global font setting */
     body {
       font-family: 'Inter', sans-serif;
     }

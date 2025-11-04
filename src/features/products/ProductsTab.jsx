@@ -13,15 +13,12 @@ const ProductsTab = ({ data, userId }) => {
   const [updateData, { isLoading: isUpdating }] = useUpdateDataMutation();
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Convert products object to an array for sorting and processing
   const productsArray = useMemo(() => {
     return Object.values(data.products).map((product) => {
-      // --- UPDATED PRICE CALCULATION ---
       const taxRate = (product.tax || 0) / 100;
       const discountRate = (product.discount || 0) / 100;
       const priceAfterDiscount = (product.unitPrice || 0) * (1 - discountRate);
       const priceWithTax = priceAfterDiscount * (1 + taxRate);
-      // --- END CALCULATION ---
       return {
         ...product,
         priceWithTax: priceWithTax,
@@ -35,7 +32,6 @@ const ProductsTab = ({ data, userId }) => {
     sortConfig,
   } = useSortableData(productsArray, { key: "name", direction: "ascending" });
 
-  // --- PAGINATION LOGIC ---
   const totalPages = Math.ceil(sortedProducts.length / ITEMS_PER_PAGE);
 
   const paginatedItems = useMemo(() => {
@@ -48,7 +44,6 @@ const ProductsTab = ({ data, userId }) => {
   const goToPage = (page) => {
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   };
-  // --- END PAGINATION LOGIC ---
 
   const handleUpdate = async (productId, field, value) => {
     let newData = JSON.parse(JSON.stringify(data));
@@ -59,7 +54,7 @@ const ProductsTab = ({ data, userId }) => {
         field === "unitPrice" ||
         field === "tax" ||
         field === "quantity" ||
-        field === "discount" // <-- ADDED
+        field === "discount"
       ) {
         product[field] = Number(value);
       } else {
@@ -70,7 +65,6 @@ const ProductsTab = ({ data, userId }) => {
       return;
     }
 
-    // When a product's name changes, update all invoice line items
     if (field === "name") {
       newData.invoices.forEach((invoice) => {
         invoice.lineItems.forEach((item) => {
@@ -81,14 +75,12 @@ const ProductsTab = ({ data, userId }) => {
       });
     }
 
-    // --- Recalculate Price with Tax ---
     if (field === "unitPrice" || field === "tax" || field === "discount") {
       const taxRate = (product.tax || 0) / 100;
       const discountRate = (product.discount || 0) / 100;
       const priceAfterDiscount = (product.unitPrice || 0) * (1 - discountRate);
       product.priceWithTax = priceAfterDiscount * (1 + taxRate);
     }
-    // --- End Recalculation ---
 
     try {
       await updateData({ userId, newData }).unwrap();
@@ -122,7 +114,6 @@ const ProductsTab = ({ data, userId }) => {
               requestSort={requestSort}
               sortConfig={sortConfig}
             />
-            {/* --- ADDED DISCOUNT COLUMN --- */}
             <SortableHeader
               label="Discount %"
               sortKey="discount"
@@ -176,7 +167,6 @@ const ProductsTab = ({ data, userId }) => {
                   onSave={(value) => handleUpdate(product.id, "brand", value)}
                 />
               </td>
-              {/* --- ADDED DISCOUNT CELL --- */}
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
                 <EditableCell
                   value={product.discount}
@@ -237,8 +227,6 @@ const ProductsTab = ({ data, userId }) => {
     </div>
   );
 };
-
-// --- HELPER COMPONENTS ---
 
 const getSortIndicator = (sortConfig, sortKey) => {
   if (sortConfig.key === sortKey) {

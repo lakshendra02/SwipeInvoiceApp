@@ -19,11 +19,11 @@ export const dataSlice = createSlice({
     setUploadError: (state, action) => {
       state.isUploading = false;
       state.uploadError = action.payload;
-      state.uploadSuccessMessage = null; // <-- ADDED THIS
+      state.uploadSuccessMessage = null;
     },
     setUploadSuccess: (state, action) => {
       state.isUploading = false;
-      state.uploadError = null; // <-- ADDED THIS
+      state.uploadError = null;
       state.uploadSuccessMessage = action.payload;
     },
     clearUploadMessage: (state) => {
@@ -44,7 +44,6 @@ export const {
   setActiveTab,
 } = dataSlice.actions;
 
-// Selectors
 export const selectIsUploading = (state) => state.data.isUploading;
 export const selectUploadError = (state) => state.data.uploadError;
 export const selectUploadSuccessMessage = (state) =>

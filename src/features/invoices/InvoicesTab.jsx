@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useDispatch } from "react-redux";
 import { useUpdateDataMutation } from "../data/firestoreApi";
-// No dataSlice import needed, RTK Query handles sync
 import { useSortableData } from "../../hooks/useSortableData";
 import EditableCell from "../../components/EditableCell";
 import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react";
@@ -13,18 +12,15 @@ const InvoicesTab = ({ data, userId }) => {
   const [updateData, { isLoading: isUpdating }] = useUpdateDataMutation();
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Flatten the invoices into individual line items for the table
   const lineItemsArray = useMemo(() => {
     return data.invoices.flatMap((invoice) =>
-      // Attach parent invoice info to each line item
       invoice.lineItems.map((item, index) => {
-        // Create a robust unique ID for the key prop
         const uniqueLineItemId =
           item.id || `${invoice.id || invoice.serialNumber}-${index}`;
         return {
           ...item,
-          uniqueLineItemId: uniqueLineItemId, // Use this for the key
-          parentInvoiceId: invoice.id || invoice.serialNumber, // ID for saving
+          uniqueLineItemId: uniqueLineItemId,
+          parentInvoiceId: invoice.id || invoice.serialNumber,
           serialNumber: invoice.serialNumber,
           invoiceDate: invoice.invoiceDate,
           customerName: invoice.customerName,
@@ -44,7 +40,6 @@ const InvoicesTab = ({ data, userId }) => {
     direction: "descending",
   });
 
-  // --- PAGINATION LOGIC ---
   const totalPages = Math.ceil(sortedLineItems.length / ITEMS_PER_PAGE);
 
   const paginatedItems = useMemo(() => {
@@ -57,7 +52,6 @@ const InvoicesTab = ({ data, userId }) => {
   const goToPage = (page) => {
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   };
-  // --- END PAGINATION LOGIC ---
 
   const handleUpdate = async (parentInvoiceId, lineItemId, field, value) => {
     let newData = JSON.parse(JSON.stringify(data));
@@ -68,7 +62,7 @@ const InvoicesTab = ({ data, userId }) => {
 
     if (invoice) {
       const item = invoice.lineItems.find(
-        (li) => li.id === lineItemId || li.product_id === lineItemId // Fallback to product_id
+        (li) => li.id === lineItemId || li.product_id === lineItemId
       );
 
       if (item) {
@@ -83,14 +77,12 @@ const InvoicesTab = ({ data, userId }) => {
           item[field] = value;
         }
 
-        // --- Recalculate totals ---
         if (field === "qty" || field === "unitPrice" || field === "tax") {
           const taxRate = (item.tax || 0) / 100;
           const priceBeforeTax = (item.unitPrice || 0) * (item.qty || 0);
           const taxAmount = priceBeforeTax * taxRate;
           item.totalAmount = priceBeforeTax + taxAmount;
         }
-        // --- End Recalculation ---
 
         try {
           await updateData({ userId, newData }).unwrap();
@@ -154,7 +146,6 @@ const InvoicesTab = ({ data, userId }) => {
               sortConfig={sortConfig}
               className="text-right"
             />
-            {/* --- ADDED TAX COLUMN --- */}
             <SortableHeader
               label="Tax %"
               sortKey="tax"
@@ -236,7 +227,6 @@ const InvoicesTab = ({ data, userId }) => {
                   type="number"
                 />
               </td>
-              {/* --- ADDED TAX CELL --- */}
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
                 <EditableCell
                   value={item.tax}
@@ -287,8 +277,6 @@ const InvoicesTab = ({ data, userId }) => {
     </div>
   );
 };
-
-// --- HELPER COMPONENTS ---
 
 const getSortIndicator = (sortConfig, sortKey) => {
   if (sortConfig.key === sortKey) {

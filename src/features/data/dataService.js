@@ -1,8 +1,6 @@
-// --- Gemini API Schema & Extraction Logic -------------------------------------
+const API_KEY = "";
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
 
-/**
- * Defines the JSON schema that the Gemini API MUST return.
- */
 const getOutputSchema = () => ({
   type: "OBJECT",
   properties: {
@@ -48,10 +46,7 @@ const getOutputSchema = () => ({
           id: { type: "STRING" },
           name: { type: "STRING" },
           brand: { type: "STRING" },
-          discount: {
-            type: "NUMBER",
-            description: "Discount percentage (e.g., 10 for 10%)",
-          }, // <-- ADDED
+          discount: { type: "NUMBER" },
           quantity: { type: "NUMBER" },
           unitPrice: { type: "NUMBER" },
           tax: { type: "NUMBER" },
@@ -60,7 +55,7 @@ const getOutputSchema = () => ({
           "id",
           "name",
           "brand",
-          "discount", // <-- ADDED
+          "discount",
           "quantity",
           "unitPrice",
           "tax",
@@ -84,9 +79,6 @@ const getOutputSchema = () => ({
   propertyOrdering: ["invoices", "products", "customers"],
 });
 
-/**
- * A retry mechanism with exponential backoff for API calls.
- */
 const fetchWithRetry = async (url, options, retries = 3, backoff = 1000) => {
   for (let i = 0; i < retries; i++) {
     try {
@@ -108,42 +100,27 @@ const fetchWithRetry = async (url, options, retries = 3, backoff = 1000) => {
   }
 };
 
-/**
- * Calls the Gemini API to extract structured data from a file.
- * @param {string} fileType - The file's original MIME type.
- * @param {string} data - The processed file data (base64 for image/pdf, text for excel).
- * @returns {Promise<object>} The structured JSON data.
- */
 export const extractDataFromFile = async (fileType, data) => {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
   const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
   const schema = getOutputSchema();
 
   let systemPrompt = `You are an expert data extraction system.
-  Your task is to analyze the provided file and extract all relevant information
-  to populate a billing system.
-  
-  The data is organized into three categories: Invoices, Products, and Customers.
-  - Invoices contain line items.
-  - Products have details and pricing.
-  - Customers have contact info.
-  
-  CRITICAL:
-  - You MUST link entities.
-  - An invoice's "customer_id" MUST match the "id" of a customer in the 'customers' list.
-  - A line item's "product_id" MUST match the "id" of a product in the 'products' list.
-  - If a customer or product is new, create a new entry for it in the 'products' or 'customers' list.
-  - If a customer or product already exists (e.g., in a different invoice), REUSE its "id".
-  - "id" fields should be a unique, descriptive slug (e.g., "customer_john_doe_9991234567", "product_iphone_16_16gb").
-  - Do not extract a "total purchase amount" for customers; the app will calculate this.
-  - Extract tax as a percentage number (e.g., 18 for 18%).
-  - Extract "Brand" (e.g., "Apple") and "Discount" (e.g., 10 for 10%) for products.
-  - Extract "Status" (e.g., "pending") and "Amount Pending" for invoices if available.
-  
-  If you receive text data from an Excel/CSV, it will be in CSV format. 
-  Each row is a transaction. Use this text data to populate the JSON structure.
-  
-  You MUST return the data in the specified JSON schema.`;
+Your task is to analyze the provided file and extract all relevant information
+to populate a billing system.
+The data is organized into three categories: Invoices, Products, and Customers.
+- Invoices contain line items.
+- Products have details and pricing.
+- Customers have contact info.
+CRITICAL:
+- You MUST link entities.
+- An invoice's "customer_id" MUST match the "id" of a customer in the 'customers' list.
+- A line item's "product_id" MUST match the "id" of a product in the 'products' list.
+- If a customer or product is new, create a new entry.
+- If a customer or product already exists, REUSE its "id".
+- Extract tax and discount as numeric values.
+- Do not calculate totals; the app will compute values.
+If Excel or CSV text is provided, extract values to match schema.`;
 
   const payload = {
     contents: [{ parts: [] }],
@@ -157,10 +134,7 @@ export const extractDataFromFile = async (fileType, data) => {
 
   if (fileType.startsWith("image/") || fileType === "application/pdf") {
     payload.contents[0].parts.push({
-      inlineData: {
-        mimeType: fileType,
-        data: data, // data is base64
-      },
+      inlineData: { mimeType: fileType, data },
     });
   } else if (
     fileType.includes("excel") ||
@@ -168,7 +142,7 @@ export const extractDataFromFile = async (fileType, data) => {
     fileType.includes("csv")
   ) {
     payload.contents[0].parts.push({
-      text: "\n--- Excel/CSV Data ---\n" + data, // data is text
+      text: "\n--- Excel/CSV Data ---\n" + data,
     });
   } else {
     throw new Error("Unsupported file type in extractDataFromFile.");
@@ -197,13 +171,9 @@ export const extractDataFromFile = async (fileType, data) => {
   }
 };
 
-/**
- * Merges the extracted AI data with the existing data in the app state.
- */
 export const processExtractedData = (existingData, extractedData) => {
   let newData = JSON.parse(JSON.stringify(existingData));
 
-  // 1. Merge Customers
   extractedData.customers.forEach((cust) => {
     if (!newData.customers[cust.id]) {
       newData.customers[cust.id] = {
@@ -214,12 +184,11 @@ export const processExtractedData = (existingData, extractedData) => {
     }
   });
 
-  // 2. Merge Products
   extractedData.products.forEach((prod) => {
     if (!newData.products[prod.id]) {
       newData.products[prod.id] = {
         ...prod,
-        discount: prod.discount || 0, // <-- ADDED
+        discount: prod.discount || 0,
         brand: prod.brand || "N/A",
         _missing: !prod.name || prod.unitPrice == null || prod.quantity == null,
       };
@@ -228,7 +197,6 @@ export const processExtractedData = (existingData, extractedData) => {
     }
   });
 
-  // 3. Merge Invoices
   extractedData.invoices.forEach((inv) => {
     if (newData.invoices.some((i) => i.serialNumber === inv.serialNumber)) {
       console.warn(`Invoice ${inv.serialNumber} already exists. Skipping.`);
@@ -252,14 +220,8 @@ export const processExtractedData = (existingData, extractedData) => {
     const processedLineItems = [];
     inv.lineItems.forEach((item) => {
       const product = newData.products[item.product_id];
-      if (!product) {
-        console.warn(
-          `Product ${item.product_id} not found for invoice ${inv.serialNumber}.`
-        );
-        return;
-      }
+      if (!product) return;
 
-      // --- Use product's discount and tax ---
       const taxRate = (product.tax || 0) / 100;
       const discountRate = (product.discount || 0) / 100;
 
@@ -271,7 +233,7 @@ export const processExtractedData = (existingData, extractedData) => {
 
       processedLineItems.push({
         ...item,
-        id: crypto.randomUUID(), // Give line item a unique ID
+        id: crypto.randomUUID(),
         productName: product.name,
         unitPrice: product.unitPrice || 0,
         tax: product.tax || 0,
@@ -280,20 +242,15 @@ export const processExtractedData = (existingData, extractedData) => {
       });
     });
 
-    // --- Status Logic ---
-    let finalStatus = "Paid"; // Default
-    if (inv.status) {
-      finalStatus = inv.status;
-    } else if (inv.amountPending > 0) {
-      finalStatus = "Pending";
-    }
-    // --- End Status Logic ---
+    let finalStatus = "Paid";
+    if (inv.status) finalStatus = inv.status;
+    else if (inv.amountPending > 0) finalStatus = "Pending";
 
     newData.invoices.push({
       ...inv,
-      id: crypto.randomUUID(), // Give parent invoice a unique ID
-      customerName: customerName,
-      companyName: companyName,
+      id: crypto.randomUUID(),
+      customerName,
+      companyName,
       lineItems: processedLineItems,
       totalAmount: invoiceTotal,
       status: finalStatus,

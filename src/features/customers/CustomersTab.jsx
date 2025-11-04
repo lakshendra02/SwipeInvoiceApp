@@ -1,19 +1,18 @@
-import React, { useMemo, useState } from "react"; // Added useState
+import React, { useMemo, useState } from "react";
 import { useDispatch } from "react-redux";
 import { useUpdateDataMutation } from "../data/firestoreApi";
 import updateEntity from "../data/dataSlice";
 import { useSortableData } from "../../hooks/useSortableData";
 import EditableCell from "../../components/EditableCell";
-import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react"; // Added icons
+import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react";
 
 const ITEMS_PER_PAGE = 25;
 
 const CustomersTab = ({ data, userId }) => {
   const dispatch = useDispatch();
   const [updateData, { isLoading: isUpdating }] = useUpdateDataMutation();
-  const [currentPage, setCurrentPage] = useState(1); // Page state
+  const [currentPage, setCurrentPage] = useState(1);
 
-  // Convert customers object to an array for sorting
   const customersArray = useMemo(
     () => Object.values(data.customers),
     [data.customers]
@@ -25,7 +24,6 @@ const CustomersTab = ({ data, userId }) => {
     sortConfig,
   } = useSortableData(customersArray, { key: "name", direction: "ascending" });
 
-  // --- PAGINATION LOGIC ---
   const totalPages = Math.ceil(sortedCustomers.length / ITEMS_PER_PAGE);
 
   const paginatedItems = useMemo(() => {
@@ -46,13 +44,10 @@ const CustomersTab = ({ data, userId }) => {
   const prevPage = () => {
     goToPage(currentPage - 1);
   };
-  // --- END PAGINATION LOGIC ---
 
   const handleUpdate = async (customerId, field, value) => {
-    // Create a deep copy of the data
     let newData = JSON.parse(JSON.stringify(data));
 
-    // Find and update the customer
     const customer = newData.customers[customerId];
     if (customer) {
       customer[field] = value;
@@ -61,7 +56,6 @@ const CustomersTab = ({ data, userId }) => {
       return;
     }
 
-    // When a customer's name or company changes, update all their invoices
     if (field === "name" || field === "companyName") {
       newData.invoices.forEach((invoice) => {
         if (invoice.customer_id === customerId) {
@@ -75,9 +69,7 @@ const CustomersTab = ({ data, userId }) => {
     }
 
     try {
-      // Save the entire data object to Firestore
       await updateData({ userId, newData }).unwrap();
-      // Dispatch local Redux action to sync other tabs
       dispatch(
         updateEntity({
           id: customerId,
@@ -124,7 +116,6 @@ const CustomersTab = ({ data, userId }) => {
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {/* Use paginatedItems here */}
           {paginatedItems.map((customer) => (
             <tr key={customer.id} className="hover:bg-gray-50">
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
@@ -160,7 +151,6 @@ const CustomersTab = ({ data, userId }) => {
         </tbody>
       </table>
 
-      {/* --- PAGINATION CONTROLS --- */}
       {totalPages > 1 && (
         <PaginationControls
           currentPage={currentPage}
@@ -174,11 +164,6 @@ const CustomersTab = ({ data, userId }) => {
   );
 };
 
-// --- ADDED HELPER COMPONENTS ---
-
-/**
- * Renders the sort direction arrow.
- */
 export const getSortIndicator = (sortConfig, sortKey) => {
   if (sortConfig.key === sortKey) {
     if (sortConfig.direction === "ascending") {
@@ -189,9 +174,6 @@ export const getSortIndicator = (sortConfig, sortKey) => {
   return null;
 };
 
-/**
- * A reusable table header component that handles sorting.
- */
 export const SortableHeader = ({
   label,
   sortKey,
@@ -211,9 +193,6 @@ export const SortableHeader = ({
   </th>
 );
 
-/**
- * A reusable pagination control component.
- */
 const PaginationControls = ({
   currentPage,
   totalPages,
@@ -222,7 +201,6 @@ const PaginationControls = ({
   prevPage,
 }) => {
   const pageNumbers = [];
-  // Show max 5 page numbers
   let startPage = Math.max(1, currentPage - 2);
   let endPage = Math.min(totalPages, currentPage + 2);
 

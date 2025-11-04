@@ -1,16 +1,102 @@
-# React + Vite
+# Swipe Invoice Manager
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A **React + Firebase** web application that automates invoice data extraction from images, PDFs, and Excel files using **Google Gemini AI**. It organizes extracted data into a real-time, three-tab dashboard (Invoices, Products, Customers) with full editing, sorting, and pagination.
 
-Currently, two official plugins are available:
+🔗 **Live Demo:** https://idyllic-sherbet-abf288.netlify.app/
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## ✨ Features
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 🤖 AI-Powered Extraction
+- Multi-modal file support: `.pdf`, `.png`, `.jpg`, `.xlsx`
+- Uses **Google Gemini AI** for text + visual extraction
 
-## Expanding the ESLint configuration
+### 🗃️ Real-Time Dashboard Tabs
+- **Invoices** – line-item-level data
+- **Products** – unique products + stock aggregation
+- **Customers** – CRM-style history
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### ⚡ Real-Time Sync
+- **Redux Toolkit + RTK Query**
+- Editing product name updates Invoice table instantly
+
+### ☁️ Firebase Firestore Back-End
+- Real-time cloud database
+- Instant sync across UI
+---
+
+## 🛠️ Tech Stack
+
+### Frontend
+- ⚛️ React (Vite)
+- 🗂️ Redux Toolkit + RTK Query
+- 🎨 Tailwind CSS
+
+### Backend / Services
+- ☁️ Firebase Firestore
+- 🤖 Google Gemini AI
+
+---
+
+## 📂 Project Structure
+```
+root/
+├── .env.local
+├── package.json
+├── tailwind.config.js
+├── vite.config.js
+└── src/
+├── app/
+│ └── store.js
+├── components/
+│ ├── EditableCell.jsx
+│ ├── FileUploader.jsx
+│ ├── Header.jsx
+│ ├── Summary.jsx
+│ └── TabNavigation.jsx
+├── features/
+│ ├── data/
+│ │ ├── dataService.js
+│ │ ├── dataSlice.js
+│ │ └── firestoreApi.js
+│ ├── customers/
+│ │ └── CustomersTab.jsx
+│ ├── invoices/
+│ │ └── InvoicesTab.jsx
+│ └── products/
+│ └── ProductsTab.jsx
+├── firebase/
+│ └── firebaseConfig.js
+├── hooks/
+│ └── useSortableData.js
+├── App.jsx
+├── index.css
+└── main.jsx
+```
+---
+
+## ⚙️ Setup & Installation
+
+### 1️⃣ Clone the Repository
+```sh
+git clone https://github.com/YourUsername/swipe-invoice-app.git
+cd swipe-invoice-app
+```
+### 2️⃣ Install Dependencies
+```
+npm install
+```
+### 3️⃣ Create .env.local
+```
+VITE_GEMINI_API_KEY="AIza..."
+VITE_FIREBASE_CONFIG={"apiKey":"...","authDomain":"...","projectId":"..."...}
+VITE_APP_ID="local-test-app"
+```
+### 4️⃣ Start Dev Server
+```
+npm run dev
+```
+App runs on:
+
+http://localhost:5173

@@ -2,44 +2,44 @@
 
 A **React + Firebase** web application that automates invoice data extraction from images, PDFs, and Excel files using **Google Gemini AI**. It organizes extracted data into a real-time, three-tab dashboard (Invoices, Products, Customers) with full editing, sorting, and pagination.
 
-🔗 **Live Demo:** https://idyllic-sherbet-abf288.netlify.app/
+**Live Demo:** https://idyllic-sherbet-abf288.netlify.app/
 
 ---
 
-## ✨ Features
+##  Features
 
-### 🤖 AI-Powered Extraction
+### AI-Powered Extraction
 - Multi-modal file support: `.pdf`, `.png`, `.jpg`, `.xlsx`
 - Uses **Google Gemini AI** for text + visual extraction
 
-### 🗃️ Real-Time Dashboard Tabs
+### Real-Time Dashboard Tabs
 - **Invoices** – line-item-level data
 - **Products** – unique products + stock aggregation
 - **Customers** – CRM-style history
 
-### ⚡ Real-Time Sync
+### Real-Time Sync
 - **Redux Toolkit + RTK Query**
 - Editing product name updates Invoice table instantly
 
-### ☁️ Firebase Firestore Back-End
+### Firebase Firestore Back-End
 - Real-time cloud database
 - Instant sync across UI
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Frontend
-- ⚛️ React (Vite)
-- 🗂️ Redux Toolkit + RTK Query
-- 🎨 Tailwind CSS
+- React (Vite)
+- Redux Toolkit + RTK Query
+- Tailwind CSS
 
 ### Backend / Services
-- ☁️ Firebase Firestore
-- 🤖 Google Gemini AI
+- Firebase Firestore
+- Google Gemini AI
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 ```
 root/
 ├── .env.local
@@ -78,22 +78,22 @@ root/
 
 ## ⚙️ Setup & Installation
 
-### 1️⃣ Clone the Repository
+### 1️. Clone the Repository
 ```sh
 git clone https://github.com/YourUsername/swipe-invoice-app.git
 cd swipe-invoice-app
 ```
-### 2️⃣ Install Dependencies
+### 2️. Install Dependencies
 ```
 npm install
 ```
-### 3️⃣ Create .env.local
+### 3️. Create .env.local
 ```
 VITE_GEMINI_API_KEY="AIza..."
 VITE_FIREBASE_CONFIG={"apiKey":"...","authDomain":"...","projectId":"..."...}
 VITE_APP_ID="local-test-app"
 ```
-### 4️⃣ Start Dev Server
+### 4️. Start Dev Server
 ```
 npm run dev
 ```

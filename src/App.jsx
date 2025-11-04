@@ -87,7 +87,7 @@ function App() {
             <FileUploader userId={userId} currentData={safeData} />
           </div>
           <div className="lg:col-span-2">
-            <Summary data={safeData} />
+            <Summary data={safeData} userId={userId} />
           </div>
         </div>
 

@@ -4,11 +4,10 @@ const API_KEY = ""; // Required for Gemini API calls
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
 
 // --- Gemini API Schema & Extraction Logic -------------------------------------
+// --- Gemini API Schema & Extraction Logic -------------------------------------
 
 /**
  * Defines the JSON schema that the Gemini API MUST return.
- * This is the most important part of the prompt, as it ensures
- * we get structured, predictable data.
  */
 const getOutputSchema = () => ({
   type: "OBJECT",
@@ -81,35 +80,30 @@ const fetchWithRetry = async (url, options, retries = 3, backoff = 1000) => {
       if (response.ok) {
         return await response.json();
       }
-      // Don't retry on client errors (4xx), but do on server errors (5xx)
       if (response.status >= 400 && response.status < 500) {
         throw new Error(`API returned status ${response.status}`);
       }
-      // Log retry and wait
       console.warn(
         `API call failed with status ${response.status}. Retrying in ${backoff}ms...`
       );
     } catch (error) {
-      if (i === retries - 1) throw error; // Re-throw last error
+      if (i === retries - 1) throw error;
     }
     await new Promise((resolve) => setTimeout(resolve, backoff));
-    backoff *= 2; // Exponential backoff
+    backoff *= 2;
   }
 };
 
 /**
  * Calls the Gemini API to extract structured data from a file.
- * @param {string} fileType - 'image/png', 'application/pdf', etc.
- * @param {string} data - Base64 encoded string of the file.
+ * @param {string} fileType - The file's original MIME type.
+ * @param {string} data - The processed file data (base64 for image/pdf, text for excel).
  * @returns {Promise<object>} The structured JSON data.
  */
 export const extractDataFromFile = async (fileType, data) => {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
-
   const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-
   const schema = getOutputSchema();
-  const fileMimeType = fileType.split("/")[0]; // 'image' or 'application'
 
   let systemPrompt = `You are an expert data extraction system.
   Your task is to analyze the provided file and extract all relevant information
@@ -130,38 +124,44 @@ export const extractDataFromFile = async (fileType, data) => {
   - Do not extract a "total purchase amount" for customers; the app will calculate this.
   - Extract tax as a percentage number (e.g., 18 for 18%).
   
+  If you receive text data from an Excel/CSV, it will be in CSV format. 
+  Each row is a transaction. Use this text data to populate the JSON structure.
+  
   You MUST return the data in the specified JSON schema.`;
 
   // Build the payload
   const payload = {
-    contents: [
-      {
-        parts: [
-          { text: systemPrompt },
-          {
-            inlineData: {
-              mimeType: fileType,
-              data: data,
-            },
-          },
-        ],
-      },
-    ],
+    contents: [{ parts: [] }],
     generationConfig: {
       responseMimeType: "application/json",
       responseSchema: schema,
     },
   };
 
-  // Handle text-based files (e.g., Excel/CSV text)
-  // We'd add logic here to convert CSV to text and send a different prompt
-  if (fileMimeType === "application" && fileType !== "application/pdf") {
-    // This is a placeholder. For a real app, we'd parse the text/CSV
-    // and send it as a text-only prompt.
-    console.warn("Text file upload not fully implemented in demo.");
-    // For now, we'll just throw an error
-    throw new Error("Excel/CSV file processing is not set up in this demo.");
+  // --- THIS IS THE UPDATED LOGIC ---
+  payload.contents[0].parts.push({ text: systemPrompt });
+
+  if (fileType.startsWith("image/") || fileType === "application/pdf") {
+    // It's a vision/PDF file, send inlineData
+    payload.contents[0].parts.push({
+      inlineData: {
+        mimeType: fileType,
+        data: data, // data is base64
+      },
+    });
+  } else if (
+    fileType.includes("excel") ||
+    fileType.includes("spreadsheetml") ||
+    fileType.includes("csv")
+  ) {
+    // It's an Excel/CSV file, send text
+    payload.contents[0].parts.push({
+      text: "\n--- Excel/CSV Data ---\n" + data, // data is text
+    });
+  } else {
+    throw new Error("Unsupported file type in extractDataFromFile.");
   }
+  // --- END UPDATED LOGIC ---
 
   console.log("Sending payload to Gemini API...", payload);
 
@@ -183,7 +183,7 @@ export const extractDataFromFile = async (fileType, data) => {
     }
   } catch (error) {
     console.error("Error calling Gemini API:", error);
-    throw error; // Re-throw to be caught by the component
+    throw error;
   }
 };
 

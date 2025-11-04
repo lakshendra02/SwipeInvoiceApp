@@ -1,70 +1,81 @@
-import React, { useState } from "react";
-import { Pencil, Save, AlertTriangle } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { AlertTriangle } from "lucide-react";
 
-const EditableCell = ({ value, onSave, label, isMissing }) => {
+// --- DOM NESTING FIX: This component now returns a <td> ---
+const EditableCell = ({
+  id,
+  field,
+  value,
+  onSave,
+  type = "text",
+  missing = false,
+}) => {
   const [isEditing, setIsEditing] = useState(false);
-  const [localValue, setLocalValue] = useState(value);
+  const [currentValue, setCurrentValue] = useState(value);
 
-  const handleSave = () => {
-    onSave(localValue);
+  useEffect(() => {
+    setCurrentValue(value);
+  }, [value]);
+
+  const handleBlur = () => {
     setIsEditing(false);
+    // Check if value actually changed
+    if (currentValue !== value) {
+      onSave(
+        id,
+        field,
+        type === "number" ? Number(currentValue) : currentValue
+      );
+    }
+  };
+
+  const handleChange = (e) => {
+    setCurrentValue(e.target.value);
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === "Enter") handleSave();
+    if (e.key === "Enter") {
+      handleBlur();
+    }
     if (e.key === "Escape") {
-      setLocalValue(value);
+      setCurrentValue(value);
       setIsEditing(false);
     }
   };
 
+  const cellClasses =
+    "px-4 py-3 whitespace-nowrap text-sm text-gray-700 relative";
+
   if (isEditing) {
     return (
-      <div className="flex items-center space-x-1">
+      <td className={cellClasses}>
         <input
-          type={typeof value === "number" ? "number" : "text"}
-          value={localValue}
-          onChange={(e) => setLocalValue(e.target.value)}
-          onBlur={handleSave}
+          type={type}
+          value={currentValue}
+          onChange={handleChange}
+          onBlur={handleBlur}
           onKeyDown={handleKeyDown}
-          className="border border-indigo-300 rounded p-1 text-sm w-full min-w-[100px] focus:ring-2 focus:ring-indigo-500"
           autoFocus
+          className="w-full p-1 border border-indigo-500 rounded-md shadow-sm outline-none"
         />
-        <button
-          onClick={handleSave}
-          className="text-green-600 hover:text-green-800 p-1 rounded transition-colors"
-        >
-          <Save size={16} />
-        </button>
-      </div>
+      </td>
     );
   }
 
-  const displayValue = value === null || value === undefined ? "N/A" : value;
-  const missing = isMissing || displayValue === "N/A";
-
   return (
-    <div
-      className={`flex items-center group cursor-pointer p-1 rounded ${
-        missing
-          ? "bg-yellow-100/50 text-red-600 font-medium border border-yellow-300"
-          : ""
-      }`}
+    <td
+      className={`${cellClasses} cursor-cell`}
       onClick={() => setIsEditing(true)}
     >
-      <span>{displayValue}</span>
       {missing && (
         <AlertTriangle
           size={14}
-          className="ml-1 text-yellow-600"
-          title={`Missing required field: ${label}`}
+          className="inline mr-1 text-yellow-500"
+          title="This data was missing and may be incomplete."
         />
       )}
-      <Pencil
-        size={12}
-        className="ml-2 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity"
-      />
-    </div>
+      {value}
+    </td>
   );
 };
 

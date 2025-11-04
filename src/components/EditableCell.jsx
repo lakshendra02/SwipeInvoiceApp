@@ -1,15 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { AlertTriangle } from "lucide-react";
 
-// --- DOM NESTING FIX: This component now returns a <td> ---
-const EditableCell = ({
-  id,
-  field,
-  value,
-  onSave,
-  type = "text",
-  missing = false,
-}) => {
+const EditableCell = ({ value, onSave, type = "text", isMissing = false }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [currentValue, setCurrentValue] = useState(value);
 
@@ -17,25 +8,16 @@ const EditableCell = ({
     setCurrentValue(value);
   }, [value]);
 
-  const handleBlur = () => {
-    setIsEditing(false);
-    // Check if value actually changed
+  const handleSave = () => {
     if (currentValue !== value) {
-      onSave(
-        id,
-        field,
-        type === "number" ? Number(currentValue) : currentValue
-      );
+      onSave(currentValue);
     }
-  };
-
-  const handleChange = (e) => {
-    setCurrentValue(e.target.value);
+    setIsEditing(false);
   };
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter") {
-      handleBlur();
+      handleSave();
     }
     if (e.key === "Escape") {
       setCurrentValue(value);
@@ -43,39 +25,31 @@ const EditableCell = ({
     }
   };
 
-  const cellClasses =
-    "px-4 py-3 whitespace-nowrap text-sm text-gray-700 relative";
-
   if (isEditing) {
     return (
-      <td className={cellClasses}>
-        <input
-          type={type}
-          value={currentValue}
-          onChange={handleChange}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-          autoFocus
-          className="w-full p-1 border border-indigo-500 rounded-md shadow-sm outline-none"
-        />
-      </td>
+      <input
+        type={type}
+        value={currentValue}
+        onChange={(e) => setCurrentValue(e.target.value)}
+        onBlur={handleSave}
+        onKeyDown={handleKeyDown}
+        autoFocus
+        className="w-full px-2 py-1 border border-indigo-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+      />
     );
   }
 
   return (
-    <td
-      className={`${cellClasses} cursor-cell`}
+    <span
       onClick={() => setIsEditing(true)}
+      className={`block w-full cursor-pointer rounded-md -mx-2 -my-1 px-2 py-1 ${
+        isMissing
+          ? "bg-yellow-100 ring-1 ring-red-400 text-red-700"
+          : "hover:bg-gray-100"
+      }`}
     >
-      {missing && (
-        <AlertTriangle
-          size={14}
-          className="inline mr-1 text-yellow-500"
-          title="This data was missing and may be incomplete."
-        />
-      )}
-      {value}
-    </td>
+      {value != null ? value : "N/A"}
+    </span>
   );
 };
 

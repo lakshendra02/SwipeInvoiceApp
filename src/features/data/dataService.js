@@ -1,8 +1,3 @@
-// This file holds the AI extraction logic, separate from components.
-
-const API_KEY = ""; // Required for Gemini API calls
-const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
-
 // --- Gemini API Schema & Extraction Logic -------------------------------------
 
 /**
@@ -19,14 +14,9 @@ const getOutputSchema = () => ({
           serialNumber: { type: "STRING" },
           invoiceDate: { type: "STRING" },
           customer_id: { type: "STRING" },
-          status: {
-            type: "STRING",
-            description: "e.g., 'Paid', 'Pending', 'Overdue'",
-          },
-          amountPending: {
-            type: "NUMBER",
-            description: "The amount left to be paid.",
-          },
+          companyName: { type: "STRING" },
+          status: { type: "STRING" },
+          amountPending: { type: "NUMBER" },
           lineItems: {
             type: "ARRAY",
             items: {
@@ -43,6 +33,7 @@ const getOutputSchema = () => ({
           "serialNumber",
           "invoiceDate",
           "customer_id",
+          "companyName",
           "status",
           "amountPending",
           "lineItems",
@@ -56,12 +47,11 @@ const getOutputSchema = () => ({
         properties: {
           id: { type: "STRING" },
           name: { type: "STRING" },
-          // --- NEW FIELD ADDED ---
-          brand: {
-            type: "STRING",
-            description: "The brand or manufacturer (e.g., Apple, Sony)",
-          },
-          // --- END NEW FIELD ---
+          brand: { type: "STRING" },
+          discount: {
+            type: "NUMBER",
+            description: "Discount percentage (e.g., 10 for 10%)",
+          }, // <-- ADDED
           quantity: { type: "NUMBER" },
           unitPrice: { type: "NUMBER" },
           tax: { type: "NUMBER" },
@@ -69,7 +59,8 @@ const getOutputSchema = () => ({
         propertyOrdering: [
           "id",
           "name",
-          "brand", // Added here
+          "brand",
+          "discount", // <-- ADDED
           "quantity",
           "unitPrice",
           "tax",
@@ -133,19 +124,21 @@ export const extractDataFromFile = async (fileType, data) => {
   to populate a billing system.
   
   The data is organized into three categories: Invoices, Products, and Customers.
+  - Invoices contain line items.
+  - Products have details and pricing.
+  - Customers have contact info.
   
   CRITICAL:
   - You MUST link entities.
   - An invoice's "customer_id" MUST match the "id" of a customer in the 'customers' list.
   - A line item's "product_id" MUST match the "id" of a product in the 'products' list.
   - If a customer or product is new, create a new entry for it in the 'products' or 'customers' list.
-  - If a customer or product already exists, REUSE its "id".
-  - "id" fields should be a unique, descriptive slug (e.g., "customer_shounak_nextspeed", "product_iphone_16").
+  - If a customer or product already exists (e.g., in a different invoice), REUSE its "id".
+  - "id" fields should be a unique, descriptive slug (e.g., "customer_john_doe_9991234567", "product_iphone_16_16gb").
   - Do not extract a "total purchase amount" for customers; the app will calculate this.
   - Extract tax as a percentage number (e.g., 18 for 18%).
-  - Extract 'companyName' for customers.
-  - Extract 'brand' (manufacturer) for products.
-  - Extract 'status' and 'amountPending' for invoices if available.
+  - Extract "Brand" (e.g., "Apple") and "Discount" (e.g., 10 for 10%) for products.
+  - Extract "Status" (e.g., "pending") and "Amount Pending" for invoices if available.
   
   If you receive text data from an Excel/CSV, it will be in CSV format. 
   Each row is a transaction. Use this text data to populate the JSON structure.
@@ -166,7 +159,7 @@ export const extractDataFromFile = async (fileType, data) => {
     payload.contents[0].parts.push({
       inlineData: {
         mimeType: fileType,
-        data: data,
+        data: data, // data is base64
       },
     });
   } else if (
@@ -175,7 +168,7 @@ export const extractDataFromFile = async (fileType, data) => {
     fileType.includes("csv")
   ) {
     payload.contents[0].parts.push({
-      text: "\n--- Excel/CSV Data ---\n" + data,
+      text: "\n--- Excel/CSV Data ---\n" + data, // data is text
     });
   } else {
     throw new Error("Unsupported file type in extractDataFromFile.");
@@ -215,7 +208,6 @@ export const processExtractedData = (existingData, extractedData) => {
     if (!newData.customers[cust.id]) {
       newData.customers[cust.id] = {
         ...cust,
-        companyName: cust.companyName || "N/A",
         totalPurchaseAmount: 0,
         _missing: !cust.name || !cust.phone || !cust.companyName,
       };
@@ -227,28 +219,16 @@ export const processExtractedData = (existingData, extractedData) => {
     if (!newData.products[prod.id]) {
       newData.products[prod.id] = {
         ...prod,
-        // --- NEW FIELD ADDED ---
+        discount: prod.discount || 0, // <-- ADDED
         brand: prod.brand || "N/A",
-        _missing:
-          !prod.name ||
-          prod.unitPrice == null ||
-          prod.quantity == null ||
-          !prod.brand, // Added check here
-        // --- END NEW FIELD ---
+        _missing: !prod.name || prod.unitPrice == null || prod.quantity == null,
       };
     } else {
       newData.products[prod.id].quantity += prod.quantity;
-      // If new data has a brand and old one didn't, update it
-      if (
-        (prod.brand && !newData.products[prod.id].brand) ||
-        newData.products[prod.id].brand === "N/A"
-      ) {
-        newData.products[prod.id].brand = prod.brand;
-      }
     }
   });
 
-  // 3. Merge Invoices (and calculate totals)
+  // 3. Merge Invoices
   extractedData.invoices.forEach((inv) => {
     if (newData.invoices.some((i) => i.serialNumber === inv.serialNumber)) {
       console.warn(`Invoice ${inv.serialNumber} already exists. Skipping.`);
@@ -257,14 +237,19 @@ export const processExtractedData = (existingData, extractedData) => {
 
     let invoiceTotal = 0;
     let customerName = "N/A";
-    let companyName = "N/A";
-    const processedLineItems = [];
+    let companyName = inv.companyName || "N/A";
 
     if (newData.customers[inv.customer_id]) {
       customerName = newData.customers[inv.customer_id].name;
-      companyName = newData.customers[inv.customer_id].companyName;
+      if (
+        companyName === "N/A" &&
+        newData.customers[inv.customer_id].companyName
+      ) {
+        companyName = newData.customers[inv.customer_id].companyName;
+      }
     }
 
+    const processedLineItems = [];
     inv.lineItems.forEach((item) => {
       const product = newData.products[item.product_id];
       if (!product) {
@@ -274,19 +259,21 @@ export const processExtractedData = (existingData, extractedData) => {
         return;
       }
 
+      // --- Use product's discount and tax ---
       const taxRate = (product.tax || 0) / 100;
-      const priceBeforeTax = product.unitPrice * item.qty;
-      const taxAmount = priceBeforeTax * taxRate;
-      const lineTotal = priceBeforeTax + taxAmount;
+      const discountRate = (product.discount || 0) / 100;
+
+      const priceAfterDiscount = (product.unitPrice || 0) * (1 - discountRate);
+      const taxAmount = priceAfterDiscount * taxRate;
+      const lineTotal = (priceAfterDiscount + taxAmount) * (item.qty || 0);
 
       invoiceTotal += lineTotal;
 
       processedLineItems.push({
-        id: crypto.randomUUID(), // Unique ID for each line item
-        product_id: item.product_id,
-        qty: item.qty,
+        ...item,
+        id: crypto.randomUUID(), // Give line item a unique ID
         productName: product.name,
-        unitPrice: product.unitPrice,
+        unitPrice: product.unitPrice || 0,
         tax: product.tax || 0,
         totalAmount: lineTotal,
         _missing: product._missing,
@@ -302,23 +289,20 @@ export const processExtractedData = (existingData, extractedData) => {
     }
     // --- End Status Logic ---
 
-    if (newData.customers[inv.customer_id]) {
-      newData.customers[inv.customer_id].totalPurchaseAmount += invoiceTotal;
-    }
-
     newData.invoices.push({
-      id: crypto.randomUUID(), // Unique ID for the invoice
-      serialNumber: inv.serialNumber,
-      invoiceDate: inv.invoiceDate,
-      customer_id: inv.customer_id,
+      ...inv,
+      id: crypto.randomUUID(), // Give parent invoice a unique ID
       customerName: customerName,
       companyName: companyName,
       lineItems: processedLineItems,
       totalAmount: invoiceTotal,
       status: finalStatus,
-      _missing:
-        !inv.serialNumber || !inv.invoiceDate || !customerName || !companyName,
+      _missing: !inv.serialNumber || !inv.invoiceDate || !customerName,
     });
+
+    if (newData.customers[inv.customer_id]) {
+      newData.customers[inv.customer_id].totalPurchaseAmount += invoiceTotal;
+    }
   });
 
   console.log("Merged data:", newData);

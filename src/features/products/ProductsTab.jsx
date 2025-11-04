@@ -1,23 +1,27 @@
-import React, { useMemo, useState } from "react"; // Added useState
+import React, { useMemo, useState } from "react";
 import { useDispatch } from "react-redux";
 import { useUpdateDataMutation } from "../data/firestoreApi";
-import { updateEntity } from "../data/dataSlice";
+import updateEntity from "../data/dataSlice";
 import { useSortableData } from "../../hooks/useSortableData";
 import EditableCell from "../../components/EditableCell";
-import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react"; // Added icons
+import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react";
 
 const ITEMS_PER_PAGE = 25;
 
 const ProductsTab = ({ data, userId }) => {
   const dispatch = useDispatch();
   const [updateData, { isLoading: isUpdating }] = useUpdateDataMutation();
-  const [currentPage, setCurrentPage] = useState(1); // Page state
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Convert products object to an array for sorting and processing
   const productsArray = useMemo(() => {
     return Object.values(data.products).map((product) => {
+      // --- UPDATED PRICE CALCULATION ---
       const taxRate = (product.tax || 0) / 100;
-      const priceWithTax = product.unitPrice * (1 + taxRate);
+      const discountRate = (product.discount || 0) / 100;
+      const priceAfterDiscount = (product.unitPrice || 0) * (1 - discountRate);
+      const priceWithTax = priceAfterDiscount * (1 + taxRate);
+      // --- END CALCULATION ---
       return {
         ...product,
         priceWithTax: priceWithTax,
@@ -44,25 +48,19 @@ const ProductsTab = ({ data, userId }) => {
   const goToPage = (page) => {
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   };
-
-  const nextPage = () => {
-    goToPage(currentPage + 1);
-  };
-
-  const prevPage = () => {
-    goToPage(currentPage - 1);
-  };
   // --- END PAGINATION LOGIC ---
 
   const handleUpdate = async (productId, field, value) => {
-    // ... existing handleUpdate logic ...
-    // Create a deep copy of the data
     let newData = JSON.parse(JSON.stringify(data));
-
-    // Find and update the product
     const product = newData.products[productId];
+
     if (product) {
-      if (field === "unitPrice" || field === "tax" || field === "quantity") {
+      if (
+        field === "unitPrice" ||
+        field === "tax" ||
+        field === "quantity" ||
+        field === "discount" // <-- ADDED
+      ) {
         product[field] = Number(value);
       } else {
         product[field] = value;
@@ -83,12 +81,17 @@ const ProductsTab = ({ data, userId }) => {
       });
     }
 
-    // TODO: Add logic to recalculate Price with Tax if unitPrice or tax changes
+    // --- Recalculate Price with Tax ---
+    if (field === "unitPrice" || field === "tax" || field === "discount") {
+      const taxRate = (product.tax || 0) / 100;
+      const discountRate = (product.discount || 0) / 100;
+      const priceAfterDiscount = (product.unitPrice || 0) * (1 - discountRate);
+      product.priceWithTax = priceAfterDiscount * (1 + taxRate);
+    }
+    // --- End Recalculation ---
 
     try {
-      // Save the entire data object to Firestore
       await updateData({ userId, newData }).unwrap();
-      // Dispatch local Redux action to sync other tabs
       dispatch(
         updateEntity({
           id: productId,
@@ -118,6 +121,14 @@ const ProductsTab = ({ data, userId }) => {
               sortKey="brand"
               requestSort={requestSort}
               sortConfig={sortConfig}
+            />
+            {/* --- ADDED DISCOUNT COLUMN --- */}
+            <SortableHeader
+              label="Discount %"
+              sortKey="discount"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+              className="text-right"
             />
             <SortableHeader
               label="Quantity (Stock)"
@@ -150,7 +161,6 @@ const ProductsTab = ({ data, userId }) => {
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {/* Use paginatedItems here instead of sortedProducts */}
           {paginatedItems.map((product) => (
             <tr key={product.id} className="hover:bg-gray-50">
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
@@ -164,7 +174,16 @@ const ProductsTab = ({ data, userId }) => {
                 <EditableCell
                   value={product.brand}
                   onSave={(value) => handleUpdate(product.id, "brand", value)}
-                  isMissing={product._missing && !product.brand}
+                />
+              </td>
+              {/* --- ADDED DISCOUNT CELL --- */}
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
+                <EditableCell
+                  value={product.discount}
+                  onSave={(value) =>
+                    handleUpdate(product.id, "discount", value)
+                  }
+                  type="number"
                 />
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
@@ -193,6 +212,7 @@ const ProductsTab = ({ data, userId }) => {
                   onSave={(value) => handleUpdate(product.id, "tax", value)}
                   isMissing={product._missing && product.tax == null}
                   type="number"
+                  ANd
                 />
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
@@ -205,39 +225,33 @@ const ProductsTab = ({ data, userId }) => {
         </tbody>
       </table>
 
-      {/* --- PAGINATION CONTROLS --- */}
       {totalPages > 1 && (
         <PaginationControls
           currentPage={currentPage}
           totalPages={totalPages}
           goToPage={goToPage}
-          nextPage={nextPage}
-          prevPage={prevPage}
+          nextPage={() => goToPage(currentPage + 1)}
+          prevPage={() => goToPage(currentPage - 1)}
         />
       )}
     </div>
   );
 };
 
-// --- ADDED HELPER COMPONENTS ---
+// --- HELPER COMPONENTS ---
 
-/**
- * Renders the sort direction arrow.
- */
-export const getSortIndicator = (sortConfig, sortKey) => {
+const getSortIndicator = (sortConfig, sortKey) => {
   if (sortConfig.key === sortKey) {
-    if (sortConfig.direction === "ascending") {
-      return <ArrowUp size={14} className="ml-1" />;
-    }
-    return <ArrowDown size={14} className="ml-1" />;
+    return sortConfig.direction === "ascending" ? (
+      <ArrowUp size={14} className="ml-1" />
+    ) : (
+      <ArrowDown size={14} className="ml-1" L />
+    );
   }
   return null;
 };
 
-/**
- * A reusable table header component that handles sorting.
- */
-export const SortableHeader = ({
+const SortableHeader = ({
   label,
   sortKey,
   requestSort,
@@ -256,9 +270,6 @@ export const SortableHeader = ({
   </th>
 );
 
-/**
- * A reusable pagination control component.
- */
 const PaginationControls = ({
   currentPage,
   totalPages,
@@ -267,20 +278,13 @@ const PaginationControls = ({
   prevPage,
 }) => {
   const pageNumbers = [];
-  // Show max 5 page numbers
   let startPage = Math.max(1, currentPage - 2);
   let endPage = Math.min(totalPages, currentPage + 2);
 
-  if (currentPage <= 3) {
-    endPage = Math.min(5, totalPages);
-  }
-  if (currentPage > totalPages - 3) {
-    startPage = Math.max(1, totalPages - 4);
-  }
+  if (currentPage <= 3) endPage = Math.min(5, totalPages);
+  if (currentPage > totalPages - 3) startPage = Math.max(1, totalPages - 4);
 
-  for (let i = startPage; i <= endPage; i++) {
-    pageNumbers.push(i);
-  }
+  for (let i = startPage; i <= endPage; i++) pageNumbers.push(i);
 
   return (
     <nav
@@ -320,10 +324,8 @@ const PaginationControls = ({
               disabled={currentPage === 1}
               className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
             >
-              <span className="sr-only">Previous</span>
               <ChevronLeft className="h-5 w-5" aria-hidden="true" />
             </button>
-            {/* Current: "z-10 bg-indigo-600 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600", Default: "text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0" */}
             {pageNumbers.map((page) => (
               <button
                 key={page}
@@ -331,8 +333,8 @@ const PaginationControls = ({
                 aria-current={page === currentPage ? "page" : undefined}
                 className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ${
                   page === currentPage
-                    ? "z-10 bg-indigo-600 text-white focus:z-20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-                    : "text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0"
+                    ? "z-10 bg-indigo-600 text-white focus:z-20"
+                    : "text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20"
                 }`}
               >
                 {page}
@@ -343,7 +345,6 @@ const PaginationControls = ({
               disabled={currentPage === totalPages}
               className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
             >
-              <span className="sr-only">Next</span>
               <ChevronRight className="h-5 w-5" aria-hidden="true" />
             </button>
           </nav>

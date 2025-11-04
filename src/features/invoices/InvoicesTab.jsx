@@ -1,138 +1,107 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { useDispatch } from "react-redux";
 import { useUpdateDataMutation } from "../data/firestoreApi";
-import updateEntity from "../data/dataSlice";
+// No dataSlice import needed, RTK Query handles sync
 import { useSortableData } from "../../hooks/useSortableData";
 import EditableCell from "../../components/EditableCell";
-import { ArrowUp, ArrowDown } from "lucide-react";
+import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react";
+
+const ITEMS_PER_PAGE = 25;
 
 const InvoicesTab = ({ data, userId }) => {
   const dispatch = useDispatch();
   const [updateData, { isLoading: isUpdating }] = useUpdateDataMutation();
+  const [currentPage, setCurrentPage] = useState(1);
 
-  // 1. Flatten the data for display
-  // We add unique IDs and parent info to each line item
-  const flatInvoiceItems = data.invoices.flatMap((invoice) =>
-    invoice.lineItems.map((item, index) => {
-      // Use the invoice ID if it exists, otherwise fall back to serialNumber
-      const parentId = invoice.id || invoice.serialNumber;
-      const uniqueLineItemId = `${parentId}-${index}`;
-      return {
-        ...item,
-        uniqueLineItemId: uniqueLineItemId,
-        parentInvoiceId: parentId,
-        serialNumber: invoice.serialNumber,
-        date: invoice.invoiceDate,
-        customerName: invoice.customerName,
-        companyName: invoice.companyName,
-        status: invoice.status,
-      };
-    })
-  );
+  // Flatten the invoices into individual line items for the table
+  const lineItemsArray = useMemo(() => {
+    return data.invoices.flatMap((invoice) =>
+      // Attach parent invoice info to each line item
+      invoice.lineItems.map((item, index) => {
+        // Create a robust unique ID for the key prop
+        const uniqueLineItemId =
+          item.id || `${invoice.id || invoice.serialNumber}-${index}`;
+        return {
+          ...item,
+          uniqueLineItemId: uniqueLineItemId, // Use this for the key
+          parentInvoiceId: invoice.id || invoice.serialNumber, // ID for saving
+          serialNumber: invoice.serialNumber,
+          invoiceDate: invoice.invoiceDate,
+          customerName: invoice.customerName,
+          companyName: invoice.companyName,
+          status: invoice.status,
+        };
+      })
+    );
+  }, [data.invoices]);
 
-  // 2. Setup sorting
   const {
-    items: sortedItems,
+    items: sortedLineItems,
     requestSort,
     sortConfig,
-  } = useSortableData(flatInvoiceItems, {
-    key: "date",
+  } = useSortableData(lineItemsArray, {
+    key: "invoiceDate",
     direction: "descending",
   });
 
-  // 3. Handle data updates
-  const handleUpdate = async (
-    uniqueLineItemId,
-    field,
-    value,
-    entityType = "invoices"
-  ) => {
-    const itemToUpdate = flatInvoiceItems.find(
-      (item) => item.uniqueLineItemId === uniqueLineItemId
+  // --- PAGINATION LOGIC ---
+  const totalPages = Math.ceil(sortedLineItems.length / ITEMS_PER_PAGE);
+
+  const paginatedItems = useMemo(() => {
+    return sortedLineItems.slice(
+      (currentPage - 1) * ITEMS_PER_PAGE,
+      currentPage * ITEMS_PER_PAGE
     );
-    if (!itemToUpdate) return;
+  }, [sortedLineItems, currentPage]);
 
-    // Create a deep copy of the data to mutate
-    let newData = JSON.parse(JSON.stringify(data));
-
-    // Find the parent invoice
-    const parentInvoice = newData.invoices.find(
-      (inv) =>
-        inv.id === itemToUpdate.parentInvoiceId ||
-        inv.serialNumber === itemToUpdate.parentInvoiceId
-    );
-    if (!parentInvoice) return;
-
-    // Find the specific line item
-    const lineItem = parentInvoice.lineItems.find(
-      (item) => item.id === itemToUpdate.id
-    );
-
-    let syncUpdate = null;
-
-    // Update the field
-    if (entityType === "invoices") {
-      if (field === "customerName") {
-        parentInvoice.customerName = value;
-        // Sync update to the customer record
-        syncUpdate = {
-          id: parentInvoice.customer_id,
-          field: "name",
-          value,
-          entityType: "customers",
-        };
-      } else if (field === "companyName") {
-        parentInvoice.companyName = value;
-        // Sync update to the customer record
-        syncUpdate = {
-          id: parentInvoice.customer_id,
-          field: "companyName",
-          value,
-          entityType: "customers",
-        };
-      } else if (field === "status") {
-        parentInvoice.status = value;
-      } else if (lineItem && field === "productName") {
-        lineItem.productName = value;
-        // Prepare a sync update for the Products tab
-        syncUpdate = {
-          id: lineItem.product_id,
-          field: "name",
-          value,
-          entityType: "products",
-        };
-      } else if (lineItem && field === "unitPrice") {
-        lineItem.unitPrice = Number(value);
-      } else if (lineItem && field === "qty") {
-        lineItem.qty = Number(value);
-      }
-      // Add more fields as needed (e.g., tax, totalAmount)
-    }
-
-    // TODO: Recalculate totals if qty, price, or tax changes
-
-    try {
-      // Save the entire updated data object to Firestore
-      await updateData({ userId, newData }).unwrap();
-      // If successful, dispatch a local Redux action to sync other tabs
-      if (syncUpdate) {
-        dispatch(updateEntity(syncUpdate));
-      }
-    } catch (error) {
-      console.error("Failed to update data:", error);
-    }
+  const goToPage = (page) => {
+    setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   };
+  // --- END PAGINATION LOGIC ---
 
-  const getStatusClass = (status) => {
-    switch (status?.toLowerCase()) {
-      case "paid":
-        return "bg-green-100 text-green-800";
-      case "pending":
-        return "bg-yellow-100 text-yellow-800";
-      case "overdue":
-        return "bg-red-100 text-red-800";
-      default:
-        return "bg-gray-100 text-gray-800";
+  const handleUpdate = async (parentInvoiceId, lineItemId, field, value) => {
+    let newData = JSON.parse(JSON.stringify(data));
+    const invoice = newData.invoices.find(
+      (inv) =>
+        inv.id === parentInvoiceId || inv.serialNumber === parentInvoiceId
+    );
+
+    if (invoice) {
+      const item = invoice.lineItems.find(
+        (li) => li.id === lineItemId || li.product_id === lineItemId // Fallback to product_id
+      );
+
+      if (item) {
+        if (
+          field === "qty" ||
+          field === "unitPrice" ||
+          field === "tax" ||
+          field === "totalAmount"
+        ) {
+          item[field] = Number(value);
+        } else {
+          item[field] = value;
+        }
+
+        // --- Recalculate totals ---
+        if (field === "qty" || field === "unitPrice" || field === "tax") {
+          const taxRate = (item.tax || 0) / 100;
+          const priceBeforeTax = (item.unitPrice || 0) * (item.qty || 0);
+          const taxAmount = priceBeforeTax * taxRate;
+          item.totalAmount = priceBeforeTax + taxAmount;
+        }
+        // --- End Recalculation ---
+
+        try {
+          await updateData({ userId, newData }).unwrap();
+        } catch (error) {
+          console.error("Failed to update invoice line item:", error);
+        }
+      } else {
+        console.error("Line item not found:", lineItemId);
+      }
+    } else {
+      console.error("Invoice not found:", parentInvoiceId);
     }
   };
 
@@ -143,7 +112,7 @@ const InvoicesTab = ({ data, userId }) => {
           <tr>
             <SortableHeader
               label="Date"
-              sortKey="date"
+              sortKey="invoiceDate"
               requestSort={requestSort}
               sortConfig={sortConfig}
             />
@@ -172,19 +141,20 @@ const InvoicesTab = ({ data, userId }) => {
               sortConfig={sortConfig}
             />
             <SortableHeader
-              label="Unit Price"
-              sortKey="unitPrice"
-              requestSort={requestSort}
-              sortConfig={sortConfig}
-              className="text-right"
-            />
-            <SortableHeader
               label="Qty"
               sortKey="qty"
               requestSort={requestSort}
               sortConfig={sortConfig}
               className="text-right"
             />
+            <SortableHeader
+              label="Unit Price"
+              sortKey="unitPrice"
+              requestSort={requestSort}
+              sortConfig={sortConfig}
+              className="text-right"
+            />
+            {/* --- ADDED TAX COLUMN --- */}
             <SortableHeader
               label="Tax %"
               sortKey="tax"
@@ -208,113 +178,130 @@ const InvoicesTab = ({ data, userId }) => {
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {sortedItems.map((item) => (
+          {paginatedItems.map((item) => (
             <tr key={item.uniqueLineItemId} className="hover:bg-gray-50">
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                {item.date || "N/A"}
+                {item.invoiceDate || "N/A"}
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                {item.serialNumber || "N/A"}
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                {item.customerName || "N/A"}
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                {item.companyName || "N/A"}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                {item.serialNumber}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                <EditableCell
-                  value={item.customerName}
-                  onSave={(value) =>
-                    handleUpdate(item.uniqueLineItemId, "customerName", value)
-                  }
-                  isMissing={!item.customerName}
-                />
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                <EditableCell
-                  value={item.companyName}
-                  onSave={(value) =>
-                    handleUpdate(item.uniqueLineItemId, "companyName", value)
-                  }
-                  isMissing={!item.companyName}
-                />
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                 <EditableCell
                   value={item.productName}
                   onSave={(value) =>
-                    handleUpdate(item.uniqueLineItemId, "productName", value)
+                    handleUpdate(
+                      item.parentInvoiceId,
+                      item.product_id,
+                      "productName",
+                      value
+                    )
                   }
-                  isMissing={item._missing}
-                />
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
-                <EditableCell
-                  value={item.unitPrice}
-                  onSave={(value) =>
-                    handleUpdate(item.uniqueLineItemId, "unitPrice", value)
-                  }
-                  isMissing={item._missing && item.unitPrice == null}
-                  type="number"
+                  isMissing={item._missing && !item.productName}
                 />
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
                 <EditableCell
                   value={item.qty}
                   onSave={(value) =>
-                    handleUpdate(item.uniqueLineItemId, "qty", value)
+                    handleUpdate(
+                      item.parentInvoiceId,
+                      item.product_id,
+                      "qty",
+                      value
+                    )
                   }
                   isMissing={item._missing && item.qty == null}
                   type="number"
                 />
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
-                {item.tax != null ? `${item.tax}%` : "N/A"}
+                <EditableCell
+                  value={item.unitPrice}
+                  onSave={(value) =>
+                    handleUpdate(
+                      item.parentInvoiceId,
+                      item.product_id,
+                      "unitPrice",
+                      value
+                    )
+                  }
+                  isMissing={item._missing && item.unitPrice == null}
+                  type="number"
+                />
+              </td>
+              {/* --- ADDED TAX CELL --- */}
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
+                <EditableCell
+                  value={item.tax}
+                  onSave={(value) =>
+                    handleUpdate(
+                      item.parentInvoiceId,
+                      item.product_id,
+                      "tax",
+                      value
+                    )
+                  }
+                  isMissing={item._missing && item.tax == null}
+                  type="number"
+                />
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
                 {item.totalAmount != null
                   ? `$${item.totalAmount.toFixed(2)}`
                   : "N/A"}
               </td>
-
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+              <td className="px-6 py-4 whitespace-nowrap text-sm">
                 <span
-                  className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(
-                    item.status
-                  )}`}
+                  className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                    item.status === "Paid"
+                      ? "bg-green-100 text-green-800"
+                      : item.status === "Pending"
+                      ? "bg-yellow-100 text-yellow-800"
+                      : "bg-gray-100 text-gray-800"
+                  }`}
                 >
-                  <EditableCell
-                    value={item.status}
-                    onSave={(value) =>
-                      handleUpdate(item.uniqueLineItemId, "status", value)
-                    }
-                    isMissing={!item.status}
-                    className="bg-transparent" // Makes cell blend in
-                  />
+                  {item.status || "N/A"}
                 </span>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      {totalPages > 1 && (
+        <PaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          goToPage={goToPage}
+          nextPage={() => goToPage(currentPage + 1)}
+          prevPage={() => goToPage(currentPage - 1)}
+        />
+      )}
     </div>
   );
 };
 
-// --- ADDED HELPER COMPONENTS ---
+// --- HELPER COMPONENTS ---
 
-/**
- * Renders the sort direction arrow.
- */
-export const getSortIndicator = (sortConfig, sortKey) => {
+const getSortIndicator = (sortConfig, sortKey) => {
   if (sortConfig.key === sortKey) {
-    if (sortConfig.direction === "ascending") {
-      return <ArrowUp size={14} className="ml-1" />;
-    }
-    return <ArrowDown size={14} className="ml-1" />;
+    return sortConfig.direction === "ascending" ? (
+      <ArrowUp size={14} className="ml-1" />
+    ) : (
+      <ArrowDown size={14} className="ml-1" />
+    );
   }
   return null;
 };
 
-/**
- * A reusable table header component that handles sorting.
- */
-export const SortableHeader = ({
+const SortableHeader = ({
   label,
   sortKey,
   requestSort,
@@ -332,5 +319,89 @@ export const SortableHeader = ({
     </div>
   </th>
 );
+
+const PaginationControls = ({
+  currentPage,
+  totalPages,
+  goToPage,
+  nextPage,
+  prevPage,
+}) => {
+  const pageNumbers = [];
+  let startPage = Math.max(1, currentPage - 2);
+  let endPage = Math.min(totalPages, currentPage + 2);
+
+  if (currentPage <= 3) endPage = Math.min(5, totalPages);
+  if (currentPage > totalPages - 3) startPage = Math.max(1, totalPages - 4);
+
+  for (let i = startPage; i <= endPage; i++) pageNumbers.push(i);
+
+  return (
+    <nav
+      className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6"
+      aria-label="Pagination"
+    >
+      <div className="flex flex-1 justify-between sm:hidden">
+        <button
+          onClick={prevPage}
+          disabled={currentPage === 1}
+          className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          Previous
+        </button>
+        <button
+          onClick={nextPage}
+          disabled={currentPage === totalPages}
+          className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
+      <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm text-gray-700">
+            Page <span className="font-medium">{currentPage}</span> of{" "}
+            <span className="font-medium">{totalPages}</span>
+          </p>
+        </div>
+        <div>
+          <nav
+            className="isolate inline-flex -space-x-px rounded-md shadow-sm"
+            aria-label="Pagination"
+          >
+            <button
+              onClick={prevPage}
+              disabled={currentPage === 1}
+              className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+            >
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            </button>
+            {pageNumbers.map((page) => (
+              <button
+                key={page}
+                onClick={() => goToPage(page)}
+                aria-current={page === currentPage ? "page" : undefined}
+                className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ${
+                  page === currentPage
+                    ? "z-10 bg-indigo-600 text-white focus:z-20"
+                    : "text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20"
+                }`}
+              >
+                {page}
+              </button>
+            ))}
+            <button
+              onClick={nextPage}
+              disabled={currentPage === totalPages}
+              className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+            >
+              <ChevronRight className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </nav>
+        </div>
+      </div>
+    </nav>
+  );
+};
 
 export default InvoicesTab;

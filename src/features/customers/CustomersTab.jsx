@@ -1,20 +1,17 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react"; // Added useState
 import { useDispatch } from "react-redux";
 import { useUpdateDataMutation } from "../data/firestoreApi";
 import updateEntity from "../data/dataSlice";
 import { useSortableData } from "../../hooks/useSortableData";
 import EditableCell from "../../components/EditableCell";
-import { ArrowUp, ArrowDown } from "lucide-react";
+import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react"; // Added icons
 
-// REMOVED the broken import:
-// import {
-//   SortableHeader,
-//   getSortIndicator,
-// } from "../../components/SortableHeader";
+const ITEMS_PER_PAGE = 25;
 
 const CustomersTab = ({ data, userId }) => {
   const dispatch = useDispatch();
   const [updateData, { isLoading: isUpdating }] = useUpdateDataMutation();
+  const [currentPage, setCurrentPage] = useState(1); // Page state
 
   // Convert customers object to an array for sorting
   const customersArray = useMemo(
@@ -27,6 +24,29 @@ const CustomersTab = ({ data, userId }) => {
     requestSort,
     sortConfig,
   } = useSortableData(customersArray, { key: "name", direction: "ascending" });
+
+  // --- PAGINATION LOGIC ---
+  const totalPages = Math.ceil(sortedCustomers.length / ITEMS_PER_PAGE);
+
+  const paginatedItems = useMemo(() => {
+    return sortedCustomers.slice(
+      (currentPage - 1) * ITEMS_PER_PAGE,
+      currentPage * ITEMS_PER_PAGE
+    );
+  }, [sortedCustomers, currentPage]);
+
+  const goToPage = (page) => {
+    setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+  };
+
+  const nextPage = () => {
+    goToPage(currentPage + 1);
+  };
+
+  const prevPage = () => {
+    goToPage(currentPage - 1);
+  };
+  // --- END PAGINATION LOGIC ---
 
   const handleUpdate = async (customerId, field, value) => {
     // Create a deep copy of the data
@@ -104,7 +124,8 @@ const CustomersTab = ({ data, userId }) => {
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {sortedCustomers.map((customer) => (
+          {/* Use paginatedItems here */}
+          {paginatedItems.map((customer) => (
             <tr key={customer.id} className="hover:bg-gray-50">
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                 <EditableCell
@@ -138,6 +159,17 @@ const CustomersTab = ({ data, userId }) => {
           ))}
         </tbody>
       </table>
+
+      {/* --- PAGINATION CONTROLS --- */}
+      {totalPages > 1 && (
+        <PaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          goToPage={goToPage}
+          nextPage={nextPage}
+          prevPage={prevPage}
+        />
+      )}
     </div>
   );
 };
@@ -178,5 +210,101 @@ export const SortableHeader = ({
     </div>
   </th>
 );
+
+/**
+ * A reusable pagination control component.
+ */
+const PaginationControls = ({
+  currentPage,
+  totalPages,
+  goToPage,
+  nextPage,
+  prevPage,
+}) => {
+  const pageNumbers = [];
+  // Show max 5 page numbers
+  let startPage = Math.max(1, currentPage - 2);
+  let endPage = Math.min(totalPages, currentPage + 2);
+
+  if (currentPage <= 3) {
+    endPage = Math.min(5, totalPages);
+  }
+  if (currentPage > totalPages - 3) {
+    startPage = Math.max(1, totalPages - 4);
+  }
+
+  for (let i = startPage; i <= endPage; i++) {
+    pageNumbers.push(i);
+  }
+
+  return (
+    <nav
+      className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6"
+      aria-label="Pagination"
+    >
+      <div className="flex flex-1 justify-between sm:hidden">
+        <button
+          onClick={prevPage}
+          disabled={currentPage === 1}
+          className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          Previous
+        </button>
+        <button
+          onClick={nextPage}
+          disabled={currentPage === totalPages}
+          className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
+      <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm text-gray-700">
+            Page <span className="font-medium">{currentPage}</span> of{" "}
+            <span className="font-medium">{totalPages}</span>
+          </p>
+        </div>
+        <div>
+          <nav
+            className="isolate inline-flex -space-x-px rounded-md shadow-sm"
+            aria-label="Pagination"
+          >
+            <button
+              onClick={prevPage}
+              disabled={currentPage === 1}
+              className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+            >
+              <span className="sr-only">Previous</span>
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            </button>
+            {pageNumbers.map((page) => (
+              <button
+                key={page}
+                onClick={() => goToPage(page)}
+                aria-current={page === currentPage ? "page" : undefined}
+                className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ${
+                  page === currentPage
+                    ? "z-10 bg-indigo-600 text-white focus:z-20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                    : "text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0"
+                }`}
+              >
+                {page}
+              </button>
+            ))}
+            <button
+              onClick={nextPage}
+              disabled={currentPage === totalPages}
+              className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+            >
+              <span className="sr-only">Next</span>
+              <ChevronRight className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </nav>
+        </div>
+      </div>
+    </nav>
+  );
+};
 
 export default CustomersTab;
